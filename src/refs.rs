@@ -10,8 +10,8 @@ pub struct AlphaBeta {
 
 pub fn alpha_beta_fr_polar(v: f32, theta: f32) -> AlphaBeta {
     // let (cos_val, sin_val) = cossin(theta);
-    let alpha = SQRT_2 * v * theta.cos();
-    let beta = SQRT_2 * v * theta.sin();
+    let alpha = SQRT_2 * v * libm::cosf(theta);
+    let beta = SQRT_2 * v * libm::sinf(theta);
     AlphaBeta {
         alpha,
         beta,
@@ -26,3 +26,5 @@ pub fn alpha_beta_fr_ab(alpha: f32, beta: f32) -> AlphaBeta {
         gamma: 0.,
     }
 }
+
+// TODO: Implement DQ reference frame & DQ reference frame power calculation? 

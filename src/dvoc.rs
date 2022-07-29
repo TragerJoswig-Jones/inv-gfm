@@ -1,31 +1,17 @@
 use super::calc::calc_power;
-use super::constants::{SQRT_2, SQRT_3};
+use super::constants::{SQRT_2, SQRT_3, PI};
 use super::refs::{alpha_beta_fr_polar, alpha_beta_fr_ab};
 
-#[test]
-fn test_dvoc_params() {
-    let v_nom: f32 = 120.;
-    let w_nom: f32 = 60.;
-    let s_rated: f32 = 500.;
-    let dt: f32 = 1.0e-4_f32;
-    let xi: f32 = 15.;
-    let c: f32 = 0.2679;
-    let dvoc = build_dvoc_controller(v_nom, w_nom, s_rated, dt, xi, c);
-    assert_eq!(dvoc.v_nom, v_nom);
-    assert_eq!(dvoc.w_nom, w_nom);
-    assert_eq!(dvoc.s_rated, s_rated);
-}
-
 pub struct DvocController {
-    v_nom: f32, // nominal voltage (V)
+    pub v_nom: f32, // nominal voltage (V)
     x_nom: f32, // nominal voltage (p.u.)
-    w_nom: f32, // nominal frequency (rad)
-    s_rated: f32,  // maximum expected power output (VA)
+    pub w_nom: f32, // nominal frequency (rad)
+    pub s_rated: f32,  // maximum expected power output (VA)
     dt: f32,  // step size (s)
     pub v: f32,  // voltage state (p.u.)
     pub theta: f32, // angle state (p.u.)
     ki: f32, // Base current (A)
-    kv: f32, // Base voltage (V)
+    pub kv: f32, // Base voltage (V)
     xi: f32,
     c: f32,  // Oscillator capacitance (F)
     l: f32,  // Oscillator inductance (H)
@@ -43,7 +29,7 @@ impl DvocController {
         let dv_dt = (dv_dt1 + dv_dt2) * 0.5;
         let dtheta_dt = (dtheta_dt1 + dtheta_dt2) * 0.5;
         self.v = self.v + self.dt * dv_dt;
-        self.theta = self.theta + self.dt * dtheta_dt;
+        self.theta = (self.theta + self.dt * dtheta_dt) % 1.;
     }
 
     // Calculates the voltage dynamics of the dVOC controller using the given input, u.
@@ -59,13 +45,20 @@ impl DvocController {
         // Per unit dynamics (eq.26 from 'A Grid-compatible Virtual Oscillator Controller')
         let _sqrt2cv = 1. / (SQRT_2 * self.c * v);
         let dv_dt = 2. * self.xi * v * ((self.x_nom * self.x_nom ) - (v * v)) - _sqrt2cv * (q / self.s_rated - self.q_ref);
-        let dtheta_dt = 1. - _sqrt2cv / (v * self.w_nom) * (p / self.s_rated - self.p_ref);
+        let dtheta_dt = 1. - _sqrt2cv / (v * self.w_nom) * (p / self.s_rated - self.p_ref);  // TODO: Check that dividing by w_nom properly per unitizes theta
 
         // Unit dynamics (eq.11-12 from 'A Grid-compatible Virtual Oscillator Controller')
         //let kvki_3cv = self.kv * self.ki / (3. * self.c * v);
         //let dv_dt = self.xi / (self.kv * self.kv) * v * (2. * (self.x_nom * self.x_nom ) - 2. * (v * v)) - kvki_3cv * (q - self.q_ref);
         //let dtheta_dt = self.w_nom - kvki_3cv / v * (p - self.p_ref);
         return (dv_dt, dtheta_dt)
+    }
+
+    // Sets the reference active power within the dVOC controller
+    // # Arguments
+    // * 'p_ref' - The desired active power reference in Watts
+    pub fn set_p_ref(&mut self, p_ref: f32) {
+        self.p_ref = p_ref / self.s_rated;
     }
 }
 
@@ -83,6 +76,25 @@ pub fn build_dvoc_controller(v_nom: f32, w_nom: f32, s_rated: f32, dt: f32, xi: 
         xi,
         c,
         l: 1. / (w_nom * w_nom * c),
+        p_ref: 0.,
+        q_ref: 0.,
+    }
+}
+
+pub fn build_default_dvoc_controller(v_nom: f32, f_nom: f32) -> DvocController {
+    DvocController {
+        v_nom,
+        x_nom: 1.,
+        w_nom: 2. * PI * f_nom,
+        s_rated: 1000.,
+        dt: 1e-4_f32,
+        v: 1.,  
+        theta: 0.,
+        ki: 3. * v_nom / 1000.,
+        kv: v_nom,
+        xi: 15.,
+        c: 0.2679,
+        l: 1. / (4. * PI * PI * 3600. * 0.2679),
         p_ref: 0.,
         q_ref: 0.,
     }

@@ -1,20 +1,9 @@
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        let result = 2 + 2;
-        assert_eq!(result, 4);
-    }
-
-    #[test]
-    fn another() {
-        panic!("Make this test fail");
-    }
-    
-}
+#![cfg_attr(not(test), no_std)]
 
 pub mod calc;
 pub mod constants;
 pub mod dvoc;
 pub mod refs;
+pub mod sims;
+mod tests;
 
