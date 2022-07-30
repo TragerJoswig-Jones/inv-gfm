@@ -50,7 +50,7 @@ impl Dynamics<LINE_STATES, LINE_INPUTS> for RLFilter {
         let di_alpha_dt = (di_alpha_dt1 + di_alpha_dt2) * 0.5;
         let di_beta_dt = (di_beta_dt1 + di_beta_dt2) * 0.5;
         self.i_alpha = self.i_alpha + dt * di_alpha_dt;
-        self.i_alpha = (self.i_beta + dt * di_beta_dt) % 1.;
+        self.i_beta = self.i_beta + dt * di_beta_dt;
     }
 
     // Calculates the voltage dynamics of the dVOC controller using the given input, u.
@@ -65,7 +65,7 @@ impl Dynamics<LINE_STATES, LINE_INPUTS> for RLFilter {
         
         // Unitc line dynamics
         let di_alpha_dt = 1./self.lf*(v1_ab.alpha - v2_ab.alpha - self.rf*i_ab.alpha);
-        let di_beta_dt = 1./self.lf*(v1_ab.beta - v2_ab.beta - self.rf*i_ab.beta);
+        let di_beta_dt  = 1./self.lf*(v1_ab.beta - v2_ab.beta - self.rf*i_ab.beta);
 
         (di_alpha_dt, di_beta_dt)
     }
@@ -111,7 +111,7 @@ impl Dynamics<ACVS_STATES, ACVS_INPUTS> for ACVoltSrc {
         let dv_dt = (dv_dt1 + dv_dt2) * 0.5;
         let dtheta_dt = (dtheta_dt1 + dtheta_dt2) * 0.5;
         self.v = self.v + dt * dv_dt;
-        self.theta = (self.theta + dt * dtheta_dt) % (2.*PI);
+        self.theta = (self.theta + dt * dtheta_dt) % 1.;
     }
 
     // Calculates the voltage dynamics of the dVOC controller using the given input, u.
@@ -119,7 +119,7 @@ impl Dynamics<ACVS_STATES, ACVS_INPUTS> for ACVoltSrc {
     // * 'x' - polar voltage (p.u.) as a tuple of f32 values: (v, theta)
     // * 'u' - An empty array as there are no inputs
     fn dynamics(&self, _x: [f32; ACVS_STATES], _u: [f32; ACVS_INPUTS]) -> (f32, f32) {
-        return (0., self.w_nom)
+        return (0., 1.)
     }
 }
 
@@ -131,7 +131,7 @@ pub fn build_ac_volt_src(v_nom: f32, w_nom: f32, s_rated: f32) -> ACVoltSrc {
         s_rated,
         
         // Internal States
-        v: v_nom,
+        v: 1.,
         theta: 0.,
     }
 }

@@ -38,7 +38,7 @@ impl DvocController {
     // * 'u' - alpha-beta current (A) as a tuple of f32 values: (ialpha, ibeta)
     fn dynamics(&mut self, x: (f32, f32), u: (f32, f32)) -> (f32, f32) {
         let (v, theta) = x;
-        let x_ab = alpha_beta_fr_polar(v * self.kv, theta);
+        let x_ab = alpha_beta_fr_polar(v * self.kv, (theta * self.w_nom) % (2.*PI));
         let u_ab = alpha_beta_fr_ab(u.0, u.1);
         let (p, q) = calc_power(x_ab, u_ab);  // TODO: Determine is this calculation can be done in p.u.
         
