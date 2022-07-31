@@ -111,7 +111,7 @@ impl Dynamics<ACVS_STATES, ACVS_INPUTS> for ACVoltSrc {
         let dv_dt = (dv_dt1 + dv_dt2) * 0.5;
         let dtheta_dt = (dtheta_dt1 + dtheta_dt2) * 0.5;
         self.v = self.v + dt * dv_dt;
-        self.theta = (self.theta + dt * dtheta_dt) % 1.;
+        self.theta = (self.theta + dt * dtheta_dt) % (2.*PI);
     }
 
     // Calculates the voltage dynamics of the dVOC controller using the given input, u.
@@ -119,7 +119,7 @@ impl Dynamics<ACVS_STATES, ACVS_INPUTS> for ACVoltSrc {
     // * 'x' - polar voltage (p.u.) as a tuple of f32 values: (v, theta)
     // * 'u' - An empty array as there are no inputs
     fn dynamics(&self, _x: [f32; ACVS_STATES], _u: [f32; ACVS_INPUTS]) -> (f32, f32) {
-        return (0., 1.)
+        return (0., self.w_nom)
     }
 }
 
@@ -131,7 +131,7 @@ pub fn build_ac_volt_src(v_nom: f32, w_nom: f32, s_rated: f32) -> ACVoltSrc {
         s_rated,
         
         // Internal States
-        v: 1.,
+        v: v_nom,
         theta: 0.,
     }
 }
