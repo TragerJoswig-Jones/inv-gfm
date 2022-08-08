@@ -1,6 +1,7 @@
-use super::calc::calc_power;
-use super::constants::{SQRT_2, SQRT_3, PI};
-use super::refs::{alpha_beta_fr_polar, alpha_beta_fr_ab};
+/* Dispatchable Virtual Oscillator Controller (dVOC) implementation */
+use super::calc::*;
+use super::constants::*;
+use super::refs::*;
 use super::sims::*;
 
 /* Define a dVOC controller */
@@ -30,10 +31,10 @@ impl Dynamics<DVOC_STATES, DVOC_INPUTS> for DvocController {
     // # Arguments
     // * 'u' - alpha-beta current as a tuple of f32 values: (ialpha, ibeta)
     fn step(&mut self, dt: f32, u: [f32; DVOC_INPUTS]) {
-        let (dv_dt1, dtheta_dt1) = self.dynamics([self.v, self.theta], u);
-        let (dv_dt2, dtheta_dt2) = self.dynamics([self.v + dt * dv_dt1, self.theta + dt * dtheta_dt1], u);
-        let dv_dt = (dv_dt1 + dv_dt2) * 0.5;
-        let dtheta_dt = (dtheta_dt1 + dtheta_dt2) * 0.5;
+        let dx_dt1 = self.dynamics([self.v, self.theta], u);
+        let dx_dt2 = self.dynamics([self.v + dt * dx_dt1[0], self.theta + dt * dx_dt1[1]], u);
+        let dv_dt = (dx_dt1[0] + dx_dt2[0]) * 0.5;
+        let dtheta_dt = (dx_dt1[1] + dx_dt2[1]) * 0.5;
         self.v = self.v + dt * dv_dt;
         self.theta = (self.theta + dt * dtheta_dt) % (2.*PI);
     }
@@ -42,17 +43,17 @@ impl Dynamics<DVOC_STATES, DVOC_INPUTS> for DvocController {
     // # Arguments    
     // * 'x' - polar voltage (p.u.) as a tuple of f32 values: (v, theta)
     // * 'u' - alpha-beta current (A) as a tuple of f32 values: (ialpha, ibeta)
-    fn dynamics(&self, x: [f32; DVOC_STATES], u: [f32; DVOC_INPUTS]) -> (f32, f32) {
+    fn dynamics(&self, x: [f32; DVOC_STATES], u: [f32; DVOC_INPUTS]) -> [f32; DVOC_STATES] {
         let (v, theta) = (x[0], x[1]);
-        let x_ab = alpha_beta_fr_polar(v, theta);
-        let u_ab = alpha_beta_fr_ab(u[0], u[1]);
-        let (p, q) = calc_power(x_ab, u_ab);  // TODO: Determine is this calculation can be done in p.u.
+        let v_dq = DQZ{ d: v * SQRT_2, q: 0., z: 0.};
+        let i_dq = AlphaBeta::from_ab_(u[0], u[1]).to_dqz(SinCos::from_theta(theta));
+        let (p, q) = calc_dq_power(v_dq, i_dq);  // TODO: Determine is this calculation can be done in p.u.
 
-        // Unit dynamics (eq.11-12 from 'A Grid-compatible Virtual Oscillator Controller')
+        // Unit dynamics (eq.11-12 from 'A Grid-compatible Virtual Oscillator Controller' by Lu M., Et al.)
         let kvki_3cv = self.kv * self.ki / (3. * self.c * v);
         let dv_dt = self.xi / (self.kv * self.kv) * v * (2. * (self.v_nom * self.v_nom ) - 2. * (v * v)) - kvki_3cv * (q - self.q_ref);
         let dtheta_dt = self.w_nom - kvki_3cv / v * (p - self.p_ref);
-        return (dv_dt, dtheta_dt)
+        return [dv_dt, dtheta_dt]
     }
 }
 

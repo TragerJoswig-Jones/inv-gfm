@@ -1,11 +1,12 @@
+/* Dynamical objects for simulating power systems */
 use super::constants::{SQRT_2, PI};
-use super::refs::{alpha_beta_fr_polar, alpha_beta_fr_ab};
+use super::refs::*;
 
 // TODO: Determine what should be in per unit and how to handle unit conversions
 
 /* Implement dynamics for all available elements */
 pub trait Dynamics<const X: usize, const U: usize>{
-    fn dynamics(&self, x: [f32; X], u: [f32; U]) -> (f32, f32);
+    fn dynamics(&self, x: [f32; X], u: [f32; U]) -> [f32; X];
     fn step(&mut self, dt: f32, u: [f32; U]) -> ();
 }
 
@@ -45,10 +46,10 @@ impl Dynamics<LINE_STATES, LINE_INPUTS> for RLFilter {
     // * 'dt' - The step period in seconds (1 / fs)
     // * 'u' - input voltages as an array of f32 values: (v1, theta1, v2, theta2)
     fn step(&mut self, dt: f32, u: [f32; LINE_INPUTS]) {
-        let (di_alpha_dt1, di_beta_dt1) = self.dynamics([self.i_alpha, self.i_beta], u);
-        let (di_alpha_dt2, di_beta_dt2) = self.dynamics([self.i_alpha + dt * di_alpha_dt1, self.i_beta + dt * di_beta_dt1], u);
-        let di_alpha_dt = (di_alpha_dt1 + di_alpha_dt2) * 0.5;
-        let di_beta_dt = (di_beta_dt1 + di_beta_dt2) * 0.5;
+        let dx_dt1 = self.dynamics([self.i_alpha, self.i_beta], u);
+        let dx_dt2 = self.dynamics([self.i_alpha + dt * dx_dt1[0], self.i_beta + dt * dx_dt1[1]], u);
+        let di_alpha_dt = (dx_dt1[0] + dx_dt2[0]) * 0.5;
+        let di_beta_dt = (dx_dt1[1] + dx_dt2[1]) * 0.5;
         self.i_alpha = self.i_alpha + dt * di_alpha_dt;
         self.i_beta = self.i_beta + dt * di_beta_dt;
     }
@@ -57,17 +58,17 @@ impl Dynamics<LINE_STATES, LINE_INPUTS> for RLFilter {
     // # Arguments    
     // * 'x' - internal states as an array of f32 values: (i_alpha, i_beta)
     // * 'u' - input voltages as an array of f32 values: (v1, theta1, v2, theta2)
-    fn dynamics(&self, x: [f32; LINE_STATES], u: [f32; LINE_INPUTS]) -> (f32, f32) {
+    fn dynamics(&self, x: [f32; LINE_STATES], u: [f32; LINE_INPUTS]) -> [f32; LINE_STATES] {
         let (v1, theta1, v2, theta2) = (u[0], u[1], u[2], u[3]);
-        let v1_ab = alpha_beta_fr_polar(v1, theta1);
-        let v2_ab = alpha_beta_fr_polar(v2, theta2);
-        let i_ab = alpha_beta_fr_ab(x[0], x[1]);
+        let v1_ab = AlphaBeta::from_polar(v1, theta1);
+        let v2_ab = AlphaBeta::from_polar(v2, theta2);
+        let i_ab = AlphaBeta::from_ab_(x[0], x[1]);
         
         // Unitc line dynamics
         let di_alpha_dt = 1./self.lf*(v1_ab.alpha - v2_ab.alpha - self.rf*i_ab.alpha);
         let di_beta_dt  = 1./self.lf*(v1_ab.beta - v2_ab.beta - self.rf*i_ab.beta);
 
-        (di_alpha_dt, di_beta_dt)
+        [di_alpha_dt, di_beta_dt]
     }
 }
 
@@ -106,10 +107,10 @@ impl Dynamics<ACVS_STATES, ACVS_INPUTS> for ACVoltSrc {
     // * 'dt' - The step period in seconds (1 / fs)
     // * 'u' - An empty array as there are no inputs
     fn step(&mut self, dt: f32, u: [f32; ACVS_INPUTS]) {
-        let (dv_dt1, dtheta_dt1) = self.dynamics([self.v, self.theta], u);
-        let (dv_dt2, dtheta_dt2) = self.dynamics([self.v + dt * dv_dt1, self.theta + dt * dtheta_dt1], u);
-        let dv_dt = (dv_dt1 + dv_dt2) * 0.5;
-        let dtheta_dt = (dtheta_dt1 + dtheta_dt2) * 0.5;
+        let dx_dt1 = self.dynamics([self.v, self.theta], u);
+        let dx_dt2 = self.dynamics([self.v + dt * dx_dt1[0], self.theta + dt * dx_dt1[1]], u);
+        let dv_dt = (dx_dt1[0] + dx_dt2[0]) * 0.5;
+        let dtheta_dt = (dx_dt1[1] + dx_dt2[1]) * 0.5;
         self.v = self.v + dt * dv_dt;
         self.theta = (self.theta + dt * dtheta_dt) % (2.*PI);
     }
@@ -118,8 +119,8 @@ impl Dynamics<ACVS_STATES, ACVS_INPUTS> for ACVoltSrc {
     // # Arguments    
     // * 'x' - polar voltage (p.u.) as a tuple of f32 values: (v, theta)
     // * 'u' - An empty array as there are no inputs
-    fn dynamics(&self, _x: [f32; ACVS_STATES], _u: [f32; ACVS_INPUTS]) -> (f32, f32) {
-        return (0., self.w_nom)
+    fn dynamics(&self, _x: [f32; ACVS_STATES], _u: [f32; ACVS_INPUTS]) -> [f32; ACVS_STATES] {
+        return [0., self.w_nom]
     }
 }
 

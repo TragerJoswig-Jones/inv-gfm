@@ -3,6 +3,7 @@
 pub mod calc;
 pub mod constants;
 pub mod dvoc;
+pub mod droop;
 pub mod refs;
 pub mod sims;
 mod tests;
