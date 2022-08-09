@@ -1,6 +1,7 @@
 /* Dynamical objects for simulating power systems */
 use super::constants::{SQRT_2, PI};
 use super::refs::*;
+use super::*;
 
 // TODO: Determine what should be in per unit and how to handle unit conversions
 
@@ -10,12 +11,12 @@ pub type State = f32;  // Type alias to indicate a state variable
 // * 'X' - Number of states, 
 // * 'U' - Number of inputs
 pub trait Dynamics<const X: usize, const U: usize>{
-    fn dynamics(&self, x:  &na::SVector<State, X>, u: [f32; U]) ->  na::SVector<State, X>;
+    fn dynamics(&self, x:  &Vec<State, X>, u: [f32; U]) ->  Vec<State, X>;
 }
 
 pub trait XState<const X: usize, const U: usize>{
-    fn get_x(&self) -> &na::SVector<State, X>;
-    fn set_x(&mut self, x: na::SVector<State, X>);
+    fn get_x(&self) -> &Vec<State, X>;
+    fn set_x(&mut self, x: Vec<State, X>);
     fn get_theta_idx(&self) -> &ThetaIdx;
 }
 
@@ -34,10 +35,10 @@ impl<T, const X: usize, const U: usize> RK2Step<X, U> for T where T: XState<X, U
     // * 'u' - alpha-beta current as a tuple of f32 values: (ialpha, ibeta)
     fn step(&mut self, dt: f32, u: [f32; U]) {
         let x = self.get_x();
-        let dx_dt1 = self.dynamics(x, u);
+        let dx_dt1 = self.dynamics(x, u);  //TODO: Replace dx_dt with reference to vector within the object?
         let dx_dt2 = self.dynamics(&(x + dt * dx_dt1), u);
         let dx_dt = (dx_dt1 + dx_dt2) * 0.5;
-        let mut x1 = x + dt * dx_dt;
+        let mut x1 = x + dt * dx_dt;  //TODO: Test if &mut x would allow for direct modification of elements of the state vector allowing us to avoid creating x1 here
         let theta_idx = self.get_theta_idx();
         if  theta_idx.has_theta {
             x1[(theta_idx.theta_idx)] = x1[(theta_idx.theta_idx)] % (2.*PI);
@@ -64,7 +65,7 @@ impl<T, const X: usize, const U: usize> NoInputStep<X, U> for T where T: RK2Step
 /* Define an RL Filter object */
 const LINE_STATES: usize = 2;
 const LINE_INPUTS: usize = 4;
-type LineStates =  na::SVector<State, LINE_STATES>;
+type LineStates =  Vec<State, LINE_STATES>;
 pub struct RLFilter {
     // RL Filter Parameters
     pub w_nom: f32, // nominal frequency (rad)
@@ -130,7 +131,7 @@ pub fn build_rl_line(w_nom: f32, s_rated: f32, rf: f32, lf: f32) -> RLFilter {
 /* Define a stiff AC voltage source object */
 const ACVS_STATES: usize = 2;
 const ACVS_INPUTS: usize = 0;
-type ACVSStates=  na::SVector<State, ACVS_STATES>;
+type ACVSStates=  Vec<State, ACVS_STATES>;
 pub struct ACVoltSrc {
     // Parameters
     pub v_nom: f32, // nominal RMS LN voltage (V)

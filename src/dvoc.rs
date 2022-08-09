@@ -3,11 +3,12 @@ use super::calc::*;
 use super::constants::*;
 use super::refs::*;
 use super::sims::*;
+use super::*;
 
 /* Define a dVOC controller */
 const DVOC_STATES: usize = 2;
 const DVOC_INPUTS: usize = 2;
-type DvocStates =  na::SVector<State, DVOC_STATES>;
+type DvocStates =  Vec<State, DVOC_STATES>;
 pub struct DvocController {
     // Internal States
     pub v: f32,  // voltage state (p.u.)

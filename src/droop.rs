@@ -3,11 +3,12 @@ use super::calc::*;
 use super::constants::{SQRT_2, SQRT_3, PI};
 use super::refs::*;
 use super::sims::*;
+use super::*;
 
 /* Define a droop controller */
 const DROOP_STATES: usize = 4;
 const DROOP_INPUTS: usize = 2;
-type DroopStates =  na::SVector<State, DROOP_STATES>;
+type DroopStates =  Vec<State, DROOP_STATES>;
 pub struct DroopController {
     // Internal States
     pub v: f32,  // voltage state (p.u.)
