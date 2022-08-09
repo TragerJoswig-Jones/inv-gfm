@@ -34,3 +34,17 @@ pub fn calc_dq_p(v: DQZ, i: DQZ) -> f32{
 pub fn calc_dq_q(v: DQZ, i: DQZ) -> f32 {
     return 1.5 * (v.q * i.d - v.d * i.q)
 }
+
+// Trying to implement add and multiply for arrays
+// type Coord = [i32; 2];
+// fn new_coord_from<F: Iterator<Item=i32>>(src: F) -> Coord {
+//     let mut result = [0; 2];
+//     for (rref, val) in result.iter_mut().zip(src) {
+//         *rref = val;
+//     }
+//     result
+// }
+
+// fn add(a: Coord, b: Coord) -> Coord {
+//     new_coord_from(a.iter().zip(&b).map(|(a, b)| a + b))
+// }

@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 # idsp = "0.8.0"
 libm = "0.2.2"
+nalgebra = "0.31.1"
