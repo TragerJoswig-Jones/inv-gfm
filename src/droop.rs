@@ -11,23 +11,23 @@ const DROOP_INPUTS: usize = 2;
 type DroopStates =  Vec<State, DROOP_STATES>;
 pub struct DroopController {
     // Internal States
-    pub v: f32,  // voltage state (p.u.)
-    pub theta: f32, // angle state (p.u.)
-    pub p_filt: f32, // low-pass filter active power (p.u.)
-    pub q_filt: f32, // low-pass filter reactive power (p.u.)
+    pub v: State,  // voltage state (p.u.)
+    pub theta: State, // angle state (p.u.)
+    pub p_filt: State, // low-pass filter active power (p.u.)
+    pub q_filt: State, // low-pass filter reactive power (p.u.)
     pub x: DroopStates,
     theta_idx: ThetaIdx,
     
     // Other Parameters
-    pub v_nom: f32, // nominal voltage (V)
-    x_nom: f32, // nominal voltage (p.u.)
-    pub w_nom: f32, // nominal frequency (rad)
-    pub w_c: f32, // power low-pass filter cutoff frequency (rad)
-    pub s_rated: f32,  // maximum expected power output (VA)
-    pub mp: f32, // frequency droop slope (rad/s)
-    pub mq: f32, // voltage droop slope (V)
-    pub p_ref: f32,  // Active power reference (p.u.)
-    pub q_ref: f32,  // Reactive power reference (p.u.)
+    pub v_nom: Param, // nominal voltage (V)
+    x_nom: Param, // nominal voltage (p.u.)
+    pub w_nom: Param, // nominal frequency (rad)
+    pub w_c: Param, // power low-pass filter cutoff frequency (rad)
+    pub s_rated: Param,  // maximum expected power output (VA)
+    pub mp: Param, // frequency droop slope (rad/s)
+    pub mq: Param, // voltage droop slope (V)
+    pub p_ref: Param,  // Active power reference (p.u.)
+    pub q_ref: Param,  // Reactive power reference (p.u.)
 }
 
 impl Dynamics<DROOP_STATES, DROOP_INPUTS> for DroopController {
@@ -35,7 +35,7 @@ impl Dynamics<DROOP_STATES, DROOP_INPUTS> for DroopController {
     // # Arguments    
     // * 'x' - polar voltage (p.u.) and filtered powers as a tuple of f32 values: (v, theta, p_filt, q_filt)
     // * 'u' - alpha-beta current (A) as a tuple of f32 values: (ialpha, ibeta)
-    fn dynamics(&self, x: &DroopStates, u: [f32; DROOP_INPUTS]) -> DroopStates {
+    fn dynamics(&self, x: &DroopStates, u: [Input; DROOP_INPUTS]) -> DroopStates {
         let (v, theta, p_filt, q_filt) = (x[0], x[1], x[2], x[3]);
         let v_dq = DQZ{ d: v * SQRT_2, q: 0., z: 0.};
         let i_dq = AlphaBeta::from_ab_(u[0], u[1]).to_dqz(SinCos::from_theta(theta));
