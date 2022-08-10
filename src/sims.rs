@@ -27,41 +27,41 @@ pub struct ThetaIdx {
     pub theta_idx: usize,
 }
 
-// impl<D, const X: usize, const U: usize> RK2Step<Flt, X, U> for D where D: XState<Flt, X, U> + Dynamics<Flt, X, U>{
-//     // Steps the dynamics using a 2nd-order Runge-Kutta method
-//     // # Arguments
-//     // * 'u' - alpha-beta current as a tuple of Flt values: (ialpha, ibeta)
-//     fn step(&mut self, dt: Flt, u: [Flt; U]) {
-//         let x = self.get_x();
-//         let dx_dt1 = self.dynamics(x, u);  //TODO: Replace dx_dt with reference to vector within the object?
-//         let dx_dt2 = self.dynamics(&(x + dt * dx_dt1), u);
-//         let dx_dt = (dx_dt1 + dx_dt2) * 0.5;
-//         let mut x1 = x + dt * dx_dt;  //TODO: Test if &mut x would allow for direct modification of elements of the state vector allowing us to avoid creating x1 here
-//         let theta_idx = self.get_theta_idx();
-//         if  theta_idx.has_theta {
-//             x1[(theta_idx.theta_idx)] = x1[(theta_idx.theta_idx)] % (2.*PI);
-//         }
-//         self.set_x(x1);
-//     }
-// }
-
-impl<D, const X: usize, const U: usize> RK2Step<Fxd, X, U> for D where D: XState<Fxd, X, U> + Dynamics<Fxd, X, U>{
+impl<D, const X: usize, const U: usize> RK2Step<Flt, X, U> for D where D: XState<Flt, X, U> + Dynamics<Flt, X, U>{
     // Steps the dynamics using a 2nd-order Runge-Kutta method
     // # Arguments
     // * 'u' - alpha-beta current as a tuple of Flt values: (ialpha, ibeta)
-    fn step(&mut self, dt: Fxd, u: [Fxd; U]) {
+    fn step(&mut self, dt: Flt, u: [Flt; U]) {
         let x = self.get_x();
         let dx_dt1 = self.dynamics(x, u);  //TODO: Replace dx_dt with reference to vector within the object?
-        let dx_dt2 = self.dynamics(&(x + dx_dt1 * dt), u);
-        let dx_dt = (dx_dt1 + dx_dt2) * ONE_HALF_FXD;
-        let mut x1 = x + dx_dt * dt;  //TODO: Test if &mut x would allow for direct modification of elements of the state vector allowing us to avoid creating x1 here
+        let dx_dt2 = self.dynamics(&(x + dt * dx_dt1), u);
+        let dx_dt = (dx_dt1 + dx_dt2) * 0.5;
+        let mut x1 = x + dt * dx_dt;  //TODO: Test if &mut x would allow for direct modification of elements of the state vector allowing us to avoid creating x1 here
         let theta_idx = self.get_theta_idx();
         if  theta_idx.has_theta {
-            x1[(theta_idx.theta_idx)] = x1[(theta_idx.theta_idx)] % (2*PI_FXD);
+            x1[(theta_idx.theta_idx)] = x1[(theta_idx.theta_idx)] % (2.*PI);
         }
         self.set_x(x1);
     }
 }
+
+// impl<D, const X: usize, const U: usize> RK2Step<Fxd, X, U> for D where D: XState<Fxd, X, U> + Dynamics<Fxd, X, U>{
+//     // Steps the dynamics using a 2nd-order Runge-Kutta method
+//     // # Arguments
+//     // * 'u' - alpha-beta current as a tuple of Flt values: (ialpha, ibeta)
+//     fn step(&mut self, dt: Fxd, u: [Fxd; U]) {
+//         let x = self.get_x();
+//         let dx_dt1 = self.dynamics(x, u);  //TODO: Replace dx_dt with reference to vector within the object?
+//         let dx_dt2 = self.dynamics(&(x + dx_dt1 * dt), u);
+//         let dx_dt = (dx_dt1 + dx_dt2) * ONE_HALF_FXD;
+//         let mut x1 = x + dx_dt * dt;  //TODO: Test if &mut x would allow for direct modification of elements of the state vector allowing us to avoid creating x1 here
+//         let theta_idx = self.get_theta_idx();
+//         if  theta_idx.has_theta {
+//             x1[(theta_idx.theta_idx)] = x1[(theta_idx.theta_idx)] % (2*PI_FXD);
+//         }
+//         self.set_x(x1);
+//     }
+// }
 
 /* Implement a dynamic step function with no inputs */
 pub trait NoInputStep<T, const X: usize, const U: usize>{
@@ -91,7 +91,7 @@ impl<D, const X: usize, const U: usize> NoInputStep<Flt, X, U> for D where D: RK
 /* Define an RL Filter object */
 const LINE_STATES: usize = 2;
 const LINE_INPUTS: usize = 4;
-type LineStates<T: Num> =  Vec<T, LINE_STATES>;
+type LineStates<T> =  Vec<T, LINE_STATES>;
 pub struct RLFilter<T: Num> {
     // RL Filter Parameters
     pub w_nom: T, // nominal frequency (rad)
@@ -115,7 +115,7 @@ impl Dynamics<Flt, LINE_STATES, LINE_INPUTS> for RLFilter<Flt> {
         let (v1, theta1, v2, theta2) = (u[0], u[1], u[2], u[3]);
         let v1_ab = AlphaBeta::from_polar(v1, theta1);
         let v2_ab = AlphaBeta::from_polar(v2, theta2);
-        let i_ab = AlphaBeta::from_ab_(x[0], x[1]);
+        let i_ab = AlphaBeta::<Flt>::from_ab_(x[0], x[1]);
         
         // Unitc line dynamics
         let di_alpha_dt = 1. / self.lf * (v1_ab.alpha - v2_ab.alpha - self.rf * i_ab.alpha);
@@ -176,7 +176,7 @@ pub fn build_rl_line(w_nom: Flt, s_rated: Flt, rf: Flt, lf: Flt) -> RLFilter<Flt
 /* Define a stiff AC voltage source object */
 const ACVS_STATES: usize = 2;
 const ACVS_INPUTS: usize = 0;
-type ACVSStates<T: Num> =  Vec<T, ACVS_STATES>;
+type ACVSStates<T> =  Vec<T, ACVS_STATES>;
 pub struct ACVoltSrc<T: Num> {
     // Parameters
     pub v_nom: T, // nominal RMS LN voltage (V)

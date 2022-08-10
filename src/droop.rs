@@ -8,7 +8,7 @@ use super::*;
 /* Define a droop controller */
 const DROOP_STATES: usize = 4;
 const DROOP_INPUTS: usize = 2;
-type DroopStates<T: Num> =  Vec<T, DROOP_STATES>;
+type DroopStates<T> =  Vec<T, DROOP_STATES>;
 pub struct DroopController<T: Num> {
     // Internal States
     pub v: T,  // voltage state (p.u.)
@@ -38,7 +38,7 @@ impl Dynamics<Flt, DROOP_STATES, DROOP_INPUTS> for DroopController<Flt> {
     fn dynamics(&self, x: &DroopStates<Flt>, u: [Flt; DROOP_INPUTS]) -> DroopStates<Flt> {
         let (v, theta, p_filt, q_filt) = (x[0], x[1], x[2], x[3]);
         let v_dq = DQZ{ d: v * SQRT_2, q: 0., z: 0.};
-        let i_dq = AlphaBeta::from_ab_(u[0], u[1]).to_dqz(SinCos::<Flt>::from_theta(theta));
+        let i_dq = AlphaBeta::<Flt>::from_ab_(u[0], u[1]).to_dqz(SinCos::<Flt>::from_theta(theta));
         let (p, q) = calc_dq_power(v_dq, i_dq);  // TODO: Determine is this calculation can be done in p.u.
 
         // Unit dynamics (eq.13 & eq.17 from 'Control of Parallel Connected Inverters in Standalone ac Supply Systems' by Chandorkar M., Et al.)

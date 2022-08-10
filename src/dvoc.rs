@@ -8,7 +8,7 @@ use super::*;
 /* Define a dVOC controller */
 const DVOC_STATES: usize = 2;
 const DVOC_INPUTS: usize = 2;
-type DvocStates<State: Num> =  Vec<State, DVOC_STATES>;
+type DvocStates<T> =  Vec<T, DVOC_STATES>;
 pub struct DvocController<T: Num> {
     // Internal States
     pub v: T,  // voltage state (p.u.)
@@ -38,7 +38,7 @@ impl Dynamics<Flt, DVOC_STATES, DVOC_INPUTS> for DvocController<Flt> {
     fn dynamics(&self, x:  &DvocStates<Flt>, u: [Flt; DVOC_INPUTS]) -> DvocStates<Flt> {
         let (v, theta) = (x[0], x[1]);
         let v_dq = DQZ{ d: v * SQRT_2, q: 0., z: 0.};
-        let i_dq = AlphaBeta::from_ab_(u[0], u[1]).to_dqz(SinCos::<Flt>::from_theta(theta));
+        let i_dq = AlphaBeta::<Flt>::from_ab_(u[0], u[1]).to_dqz(SinCos::<Flt>::from_theta(theta));
         let (p, q) = calc_dq_power(v_dq, i_dq);  // TODO: Determine is this calculation can be done in p.u.
 
         // Unit dynamics (eq.11-12 from 'A Grid-compatible Virtual Oscillator Controller' by Lu M., Et al.)
