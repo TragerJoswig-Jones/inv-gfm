@@ -5,25 +5,25 @@ use super::*;
 
 // TODO: Determine what should be in per unit and how to handle unit conversions
 
-pub type State = f32;  // Type alias to indicate a state variable
-pub type Input = f32;  // Type alias to indicate an input variable
-pub type Param = f32;  // Type alias to indicate a parameter
+pub type State = Fxd;  // Type alias to indicate a state variable
+pub type T = f32;  // Type alias to indicate an input variable
+pub type Param = Fxd;  // Type alias to indicate a parameter
 
-/* Implement dynamics for all available elements */
+/* Dynamics trait that should be implemented for all available elements */
 // * 'X' - Number of states, 
 // * 'U' - Number of inputs
-pub trait Dynamics<const X: usize, const U: usize>{
-    fn dynamics(&self, x:  &Vec<State, X>, u: [Input; U]) ->  Vec<State, X>;
+pub trait Dynamics<T: Num, const X: usize, const U: usize>{
+    fn dynamics(&self, x:  &Vec<T, X>, u: [T; U]) ->  Vec<State, X>;
 }
 
-pub trait XState<const X: usize, const U: usize>{
-    fn get_x(&self) -> &Vec<State, X>;
-    fn set_x(&mut self, x: Vec<State, X>);
+pub trait XState<T: Num, const X: usize, const U: usize>{
+    fn get_x(&self) -> &Vec<T, X>;
+    fn set_x(&mut self, x: Vec<T, X>);
     fn get_theta_idx(&self) -> &ThetaIdx;
 }
 
-pub trait RK2Step<const X: usize, const U: usize>{
-    fn step(&mut self, dt: Param, u: [Input; U]) -> ();
+pub trait RK2Step<T: Num, const X: usize, const U: usize>{
+    fn step(&mut self, dt: T, u: [T; U]) -> ();
 }
 
 pub struct ThetaIdx {
@@ -31,11 +31,11 @@ pub struct ThetaIdx {
     pub theta_idx: usize,
 }
 
-impl<T, const X: usize, const U: usize> RK2Step<X, U> for T where T: XState<X, U> + Dynamics<X, U>{
+impl<D, T: Num, const X: usize, const U: usize> RK2Step<T, X, U> for D where D: XState<T, X, U> + Dynamics<T, X, U>{
     // Steps the dynamics using a 2nd-order Runge-Kutta method
     // # Arguments
     // * 'u' - alpha-beta current as a tuple of f32 values: (ialpha, ibeta)
-    fn step(&mut self, dt: Param, u: [Input; U]) {
+    fn step(&mut self, dt: T, u: [T; U]) {
         let x = self.get_x();
         let dx_dt1 = self.dynamics(x, u);  //TODO: Replace dx_dt with reference to vector within the object?
         let dx_dt2 = self.dynamics(&(x + dt * dx_dt1), u);
@@ -50,16 +50,16 @@ impl<T, const X: usize, const U: usize> RK2Step<X, U> for T where T: XState<X, U
 }
 
 /* Implement a dynamic step function with no inputs */
-pub trait NoInputStep<const X: usize, const U: usize>{
-    fn step_(&mut self, dt: Param) -> ();
+pub trait NoInputStep<T, const X: usize, const U: usize>{
+    fn step_(&mut self, dt: T) -> ();
 }
 
-impl<T, const X: usize, const U: usize> NoInputStep<X, U> for T where T: RK2Step<X, U> + Dynamics<X, U>{
+impl<D, T: Num, const X: usize, const U: usize> NoInputStep<T, X, U> for D where D: RK2Step<T, X, U> + Dynamics<T, X, U>{
     // Steps the dVOC dynamics
     // # Arguments
     // * 'dt' - The step period in seconds (1 / fs)
     // * 'u' - An empty array as there are no inputs
-    fn step_(&mut self, dt: Param) {
+    fn step_(&mut self, dt: T) {
         self.step(dt, [0.; U]);
     }
 }
@@ -67,27 +67,27 @@ impl<T, const X: usize, const U: usize> NoInputStep<X, U> for T where T: RK2Step
 /* Define an RL Filter object */
 const LINE_STATES: usize = 2;
 const LINE_INPUTS: usize = 4;
-type LineStates =  Vec<State, LINE_STATES>;
-pub struct RLFilter {
+type LineStates<T: Num> =  Vec<T, LINE_STATES>;
+pub struct RLFilter<T: Num> {
     // RL Filter Parameters
-    pub w_nom: Param, // nominal frequency (rad)
-    pub s_rated: Param,  // maximum expected power output (VA)
-    rf: Param,  // Line resistance (Ohms)
-    lf: Param,  // Line inductance (H)
+    pub w_nom: T, // nominal frequency (rad)
+    pub s_rated: T,  // maximum expected power output (VA)
+    rf: T,  // Line resistance (Ohms)
+    lf: T,  // Line inductance (H)
 
     // Internal States
-    pub i_alpha: State,  // alpha current state (p.u.)
-    pub i_beta: State, // beta current state (p.u.)
-    pub x: LineStates,
+    pub i_alpha: T,  // alpha current state (p.u.)
+    pub i_beta: T, // beta current state (p.u.)
+    pub x: LineStates<T>,
     theta_idx: ThetaIdx, // -1 for RLFilter
 }
 
-impl Dynamics<LINE_STATES, LINE_INPUTS> for RLFilter {
+impl<T: Num> Dynamics<T, LINE_STATES, LINE_INPUTS> for RLFilter<T> {
     // Calculates the voltage dynamics of the dVOC controller using the given input, u.
     // # Arguments    
     // * 'x' - internal states as an array of f32 values: (i_alpha, i_beta)
     // * 'u' - input voltages as an array of f32 values: (v1, theta1, v2, theta2)
-    fn dynamics(&self, x: &LineStates, u: [Input; LINE_INPUTS]) -> LineStates {
+    fn dynamics(&self, x: &LineStates<T>, u: [T; LINE_INPUTS]) -> LineStates<T> {
         let (v1, theta1, v2, theta2) = (u[0], u[1], u[2], u[3]);
         let v1_ab = AlphaBeta::from_polar(v1, theta1);
         let v2_ab = AlphaBeta::from_polar(v2, theta2);
@@ -102,7 +102,7 @@ impl Dynamics<LINE_STATES, LINE_INPUTS> for RLFilter {
 }
 
 // Implement functions for getting and setting the states of the dVOC object
-impl XState<LINE_STATES, LINE_INPUTS> for RLFilter {
+impl<T: Num> XState<T, LINE_STATES, LINE_INPUTS> for RLFilter<T> {
     fn get_x(&self) -> &nalgebra::SVector<State, LINE_STATES> {
         return &self.x
     }
@@ -114,7 +114,7 @@ impl XState<LINE_STATES, LINE_INPUTS> for RLFilter {
     }
 }
 
-pub fn build_rl_line(w_nom: f32, s_rated: f32, rf: f32, lf: f32) -> RLFilter {
+pub fn build_rl_line(w_nom: f32, s_rated: f32, rf: f32, lf: f32) -> RLFilter<f32> {
     RLFilter {
         // RL Filter Parameters
         w_nom,
@@ -133,32 +133,32 @@ pub fn build_rl_line(w_nom: f32, s_rated: f32, rf: f32, lf: f32) -> RLFilter {
 /* Define a stiff AC voltage source object */
 const ACVS_STATES: usize = 2;
 const ACVS_INPUTS: usize = 0;
-type ACVSStates=  Vec<State, ACVS_STATES>;
-pub struct ACVoltSrc {
+type ACVSStates<T: Num> =  Vec<T, ACVS_STATES>;
+pub struct ACVoltSrc<T: Num> {
     // Parameters
-    pub v_nom: Param, // nominal RMS LN voltage (V)
-    pub w_nom: Param, // nominal frequency (rad)
-    pub s_rated: Param,  // maximum expected power output (VA)
+    pub v_nom: T, // nominal RMS LN voltage (V)
+    pub w_nom: T, // nominal frequency (rad)
+    pub s_rated: T,  // maximum expected power output (VA)
     
     // Internal States
-    pub v: State,  // alpha current state (p.u.)
-    pub theta: State, // beta current state (p.u.)
-    pub x: ACVSStates,
+    pub v: T,  // alpha current state (p.u.)
+    pub theta: T, // beta current state (p.u.)
+    pub x: ACVSStates<T>,
     theta_idx: ThetaIdx,
 }
 
-impl Dynamics<ACVS_STATES, ACVS_INPUTS> for ACVoltSrc {
+impl<T: Num> Dynamics<T, ACVS_STATES, ACVS_INPUTS> for ACVoltSrc<T> {
     // Calculates the voltage dynamics of the dVOC controller using the given input, u.
     // # Arguments    
     // * 'x' - polar voltage (p.u.) as a tuple of f32 values: (v, theta)
     // * 'u' - An empty array as there are no inputs
-    fn dynamics(&self, _x: &ACVSStates, _u: [Input; ACVS_INPUTS]) -> ACVSStates {
+    fn dynamics(&self, _x: &ACVSStates<T>, _u: [T; ACVS_INPUTS]) -> ACVSStates<T> {
         return na::Vector2::new(0., self.w_nom)
     }
 }
 
 // Implement functions for getting and setting the states of the dVOC object
-impl XState<ACVS_STATES, ACVS_INPUTS> for ACVoltSrc {
+impl<T: Num> XState<T, ACVS_STATES, ACVS_INPUTS> for ACVoltSrc<T> {
     fn get_x(&self) -> &nalgebra::SVector<State, ACVS_STATES> {
         return &self.x
     }
@@ -170,7 +170,7 @@ impl XState<ACVS_STATES, ACVS_INPUTS> for ACVoltSrc {
     }
 }
 
-pub fn build_ac_volt_src(v_nom: f32, w_nom: f32, s_rated: f32) -> ACVoltSrc {
+pub fn build_ac_volt_src(v_nom: f32, w_nom: f32, s_rated: f32) -> ACVoltSrc<f32> {
     ACVoltSrc {
         // Parameters
         v_nom,
