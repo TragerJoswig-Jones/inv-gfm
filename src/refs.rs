@@ -17,13 +17,14 @@ pub trait Num<Rhs = Self, Output = Self>: Add<Rhs, Output = Output>
                                         + Mul<Rhs, Output = Output>
                                         + Div<Rhs, Output = Output>
                                         + Rem<Rhs, Output = Output> 
+                                        + core::ops::Neg
                                         //+ Mul<i32, Output = Output>
 {}  // pub trait Num: core::ops::Add<Output = Self> + core::ops::Mul<Output = Self>  {}; (https://stackoverflow.com/questions/40776020/is-there-any-way-to-restrict-a-generic-type-to-one-of-several-types)
 // TODO: Add multiply by integer scalar to above list???
-// impl Mul<i32> for f32 {
+// impl Mul<I32> for f32 {
 //     type Output = f32;
     
-//     fn mul(self, rhs: i32) -> f32 {
+//     fn mul(self, rhs: I32) -> f32 {
 //         return self * rhs as f32
 //     }
 // } 
@@ -218,7 +219,7 @@ impl<T: Num> ToFromDQZ<T> for AlphaBeta<T> {
 /* 
 Direct-Quadrature-Zero (DQZ) Reference Frame Values 
 */
-pub struct DQZ<T> {
+pub struct DQZ<T: Num> {
     pub d: T,
     pub q: T,
     pub z: T,

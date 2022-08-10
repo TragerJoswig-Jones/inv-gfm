@@ -24,3 +24,5 @@ pub const ONE_THIRD_FXD: Fxd = Fxd::from_num(1. / 3.);
 pub const TWO_THIRDS_FXD: Fxd = Fxd::from_num(2. / 3.);
 pub const ONE_HALF_FXD: Fxd = Fxd::from_num(0.5);
 pub const SQRT_3_OVER_2_FXD: Fxd = Fxd::from_num(SQRT_3 / 2.);
+pub const ZERO: Fxd = Fxd::from_num(0);
+pub const ONE: Fxd = Fxd::from_num(1);
