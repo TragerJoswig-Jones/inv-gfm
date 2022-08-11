@@ -30,15 +30,15 @@ pub struct DroopController<T: Num> {
     pub q_ref: T,  // Reactive power reference (p.u.)
 }
 
-impl Dynamics<Flt, DROOP_STATES, DROOP_INPUTS> for DroopController<Flt> {
+impl<T: Num> Dynamics<T, DROOP_STATES, DROOP_INPUTS> for DroopController<T> {
     // Calculates the voltage dynamics of the droop controller using the given input, u.
     // # Arguments    
-    // * 'x' - polar voltage (p.u.) and filtered powers as a tuple of Flt values: (v, theta, p_filt, q_filt)
-    // * 'u' - alpha-beta current (A) as a tuple of Flt values: (ialpha, ibeta)
-    fn dynamics(&self, x: &DroopStates<Flt>, u: [Flt; DROOP_INPUTS]) -> DroopStates<Flt> {
+    // * 'x' - polar voltage (p.u.) and filtered powers as a tuple of f32 values: (v, theta, p_filt, q_filt)
+    // * 'u' - alpha-beta current (A) as a tuple of f32 values: (ialpha, ibeta)
+    fn dynamics(&self, x: &DroopStates<T>, u: [T; DROOP_INPUTS]) -> DroopStates<T> {
         let (v, theta, p_filt, q_filt) = (x[0], x[1], x[2], x[3]);
-        let v_dq = DQZ{ d: v * SQRT_2, q: 0., z: 0.};
-        let i_dq = AlphaBeta::<Flt>::from_ab_(u[0], u[1]).to_dqz(SinCos::<Flt>::from_theta(theta));
+        let v_dq = DQZ{ d: v * T::from_fixed(SQRT_2), q: T::from_fixed(ZERO), z: T::from_fixed(ZERO)};
+        let i_dq = AlphaBeta::from_ab_(u[0], u[1]).to_dqz(SinCos::<T>::from_theta(theta));
         let (p, q) = calc_dq_power(v_dq, i_dq);  // TODO: Determine is this calculation can be done in p.u.
 
         // Unit dynamics (eq.13 & eq.17 from 'Control of Parallel Connected Inverters in Standalone ac Supply Systems' by Chandorkar M., Et al.)
@@ -49,26 +49,6 @@ impl Dynamics<Flt, DROOP_STATES, DROOP_INPUTS> for DroopController<Flt> {
         return na::Vector4::new(dv_dt, dtheta_dt, dp_filt_dt, dq_filt_dt)
     }
 }
-
-// impl Dynamics<Fxd, DROOP_STATES, DROOP_INPUTS> for DroopController<Fxd> {
-//     // Calculates the voltage dynamics of the droop controller using the given input, u.
-//     // # Arguments    
-//     // * 'x' - polar voltage (p.u.) and filtered powers as a tuple of f32 values: (v, theta, p_filt, q_filt)
-//     // * 'u' - alpha-beta current (A) as a tuple of f32 values: (ialpha, ibeta)
-//     fn dynamics(&self, x: &DroopStates<Fxd>, u: [Fxd; DROOP_INPUTS]) -> DroopStates<Fxd> {
-//         let (v, theta, p_filt, q_filt) = (x[0], x[1], x[2], x[3]);
-//         let v_dq = DQZ{ d: v * SQRT_2_FXD, q: ZERO, z: ZERO};
-//         let i_dq = AlphaBeta::from_ab_(u[0], u[1]).to_dqz(SinCos::<Fxd>::from_theta(theta));
-//         let (p, q) = calc_dq_power(v_dq, i_dq);  // TODO: Determine is this calculation can be done in p.u.
-
-//         // Unit dynamics (eq.13 & eq.17 from 'Control of Parallel Connected Inverters in Standalone ac Supply Systems' by Chandorkar M., Et al.)
-//         let dp_filt_dt = self.w_c * (p - p_filt);
-//         let dq_filt_dt = self.w_c * (q - q_filt);
-//         let dv_dt = - self.mq * dq_filt_dt;
-//         let dtheta_dt = self.w_nom - self.mp * (p_filt - self.p_ref);
-//         return na::Vector4::new(dv_dt, dtheta_dt, dp_filt_dt, dq_filt_dt)
-//     }
-// }
 
 // Implement functions for getting and setting the states of the dVOC object
 impl<T: Num> XState<T, DROOP_STATES, DROOP_INPUTS> for DroopController<T> {
@@ -92,42 +72,64 @@ impl<T: Num> DroopController<T> {
     }
 }
 
-pub fn build_droop_controller(v_nom: Flt, w_nom: Flt, s_rated: Flt, mp: Flt, mq: Flt, w_c: Flt) -> DroopController<Flt> {
+pub fn build_droop_controller<T: Num>(v_nom: T, w_nom: T, s_rated: T, mp: T, mq: T, w_c: T) -> DroopController<T> {
     DroopController {
         v_nom,
-        x_nom: 1.,
+        x_nom:  T::from_fixed(ONE),
         w_nom,
         s_rated,
         v: v_nom,  
-        theta: 0.,
-        p_filt: 0.,
-        q_filt: 0.,
-        x: na::Vector4::new(v_nom, 0., 0., 0.),
+        theta:  T::from_fixed(ZERO),
+        p_filt: T::from_fixed(ZERO),
+        q_filt: T::from_fixed(ZERO),
+        x: na::Vector4::new(v_nom, T::from_fixed(ZERO), T::from_fixed(ZERO), T::from_fixed(ZERO)),
         theta_idx: ThetaIdx {has_theta: true, theta_idx: 1},
         mp,
         mq,
         w_c,
-        p_ref: 0.,
-        q_ref: 0.,
+        p_ref: T::from_fixed(ZERO),
+        q_ref: T::from_fixed(ZERO),
     }
 }
 
-pub fn build_default_droop_controller(v_nom: Flt, f_nom: Flt) -> DroopController<Flt> {
+pub fn build_default_droop_controller<T: Num>(v_nom: T, f_nom: T) -> DroopController<T> {
     DroopController {
         v_nom,
-        x_nom: 1.,
-        w_nom: 2. * PI * f_nom,
-        s_rated: 1000.,
+        x_nom: T::from_num(1),
+        w_nom:  T::from_fixed(2 * PI) * f_nom,
+        s_rated: T::from_num(1000),
         v: v_nom,  
-        theta: 0.,
-        p_filt: 0.,
-        q_filt: 0.,
-        x: na::Vector4::new(v_nom, 0., 0., 0.),
+        theta: T::from_num(0),
+        p_filt: T::from_num(0),
+        q_filt: T::from_num(0),
+        x: na::Vector4::new(v_nom, T::from_num(0), T::from_num(0), T::from_num(0)),
         theta_idx: ThetaIdx {has_theta: true, theta_idx: 1},
-        mp: 0.0026,
-        mq: 0.005,
-        w_c: 2.*PI*30.,
-        p_ref: 0.,
-        q_ref: 0.,
+        mp: T::from_num(0.0026),
+        mq: T::from_num(0.005),
+        w_c:  T::from_fixed(2*PI*30),
+        p_ref: T::from_num(0),
+        q_ref: T::from_num(0),
     }
 }
+
+pub fn build_droop_controller_from_flt<T: Num>(v_nom: f32, f_nom: f32, s_rated: f32, mp: f32, mq: f32, f_c: f32) -> DroopController<T> {
+    let w_nom = T::from_num(2. * f_nom) * T::from_fixed(PI);
+    DroopController {
+        v_nom: T::from_num(v_nom),
+        x_nom: T::from_fixed(ONE),
+        w_nom,
+        s_rated: T::from_num(s_rated),
+        v: T::from_num(v_nom),  
+        theta: T::from_fixed(ZERO),
+        p_filt: T::from_fixed(ZERO),
+        q_filt: T::from_fixed(ZERO),
+        x: na::Vector4::new(T::from_num(v_nom), T::from_fixed(ZERO), T::from_fixed(ZERO), T::from_fixed(ZERO)),
+        theta_idx: ThetaIdx {has_theta: true, theta_idx: 1},
+        mp: T::from_num(mp),
+        mq: T::from_num(mq),
+        w_c: T::from_num(f_c) * T::from_fixed(2*PI),
+        p_ref: T::from_fixed(ZERO),
+        q_ref: T::from_fixed(ZERO),
+    }
+}
+

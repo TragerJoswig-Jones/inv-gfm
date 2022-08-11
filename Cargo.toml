@@ -6,8 +6,6 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-# idsp = "0.8.0"  # Option for f32 sin_cos calculations
-libm = "0.2.2"  # Option for f32 sin_cos calculations
 nalgebra = "0.31.1"
 cordic = "0.1.5"
 fixed = "1.17.0"
