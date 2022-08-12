@@ -20,10 +20,8 @@ pub struct DroopController<T: Num> {
     
     // Other Parameters
     pub v_nom: T, // nominal voltage (V)
-    x_nom: T, // nominal voltage (p.u.)
     pub w_nom: T, // nominal frequency (rad)
     pub w_c: T, // power low-pass filter cutoff frequency (rad)
-    pub s_rated: T,  // maximum expected power output (VA)
     pub mp: T, // frequency droop slope (rad/s)
     pub mq: T, // voltage droop slope (V)
     pub p_ref: T,  // Active power reference (p.u.)
@@ -36,16 +34,16 @@ impl<T: Num> Dynamics<T, DROOP_STATES, DROOP_INPUTS> for DroopController<T> {
     // * 'x' - polar voltage (p.u.) and filtered powers as a tuple of f32 values: (v, theta, p_filt, q_filt)
     // * 'u' - alpha-beta current (A) as a tuple of f32 values: (ialpha, ibeta)
     fn dynamics(&self, x: &DroopStates<T>, u: [T; DROOP_INPUTS]) -> DroopStates<T> {
-        let (v, theta, p_filt, q_filt) = (x[0], x[1], x[2], x[3]);
+        let (v, theta, p_filt, q_filt) = (x[0], x[1] * self.w_nom, x[2], x[3]);
         let v_dq = DQZ{ d: v * T::from_fixed(SQRT_2), q: T::from_fixed(ZERO), z: T::from_fixed(ZERO)};
         let i_dq = AlphaBeta::from_ab_(u[0], u[1]).to_dqz(SinCos::<T>::from_theta(theta));
-        let (p, q) = calc_dq_power(v_dq, i_dq);  // TODO: Determine is this calculation can be done in p.u.
+        let (p, q) = calc_dq_power(v_dq, i_dq);
 
-        // Unit dynamics (eq.13 & eq.17 from 'Control of Parallel Connected Inverters in Standalone ac Supply Systems' by Chandorkar M., Et al.)
+        // Per-unit dynamics (based on eq.13 & eq.17 from 'Control of Parallel Connected Inverters in Standalone ac Supply Systems' by Chandorkar M., Et al.)
         let dp_filt_dt = self.w_c * (p - p_filt);
         let dq_filt_dt = self.w_c * (q - q_filt);
         let dv_dt = - self.mq * dq_filt_dt;
-        let dtheta_dt = self.w_nom - self.mp * (p_filt - self.p_ref);
+        let dtheta_dt = T::from_fixed(ONE) - self.mp * (p_filt - self.p_ref);
         return na::Vector4::new(dv_dt, dtheta_dt, dp_filt_dt, dq_filt_dt)
     }
 }
@@ -75,17 +73,15 @@ impl<T: Num> DroopController<T> {
     }
 }
 
-pub fn build_droop_controller<T: Num>(v_nom: T, w_nom: T, s_rated: T, mp: T, mq: T, w_c: T) -> DroopController<T> {
+pub fn build_droop_controller<T: Num>(v_nom: T, w_nom: T, mp: T, mq: T, w_c: T) -> DroopController<T> {
     DroopController {
         v_nom,
-        x_nom:  T::from_fixed(ONE),
         w_nom,
-        s_rated,
-        v: v_nom,  
+        v: T::from_fixed(ONE),  
         theta:  T::from_fixed(ZERO),
         p_filt: T::from_fixed(ZERO),
         q_filt: T::from_fixed(ZERO),
-        x: na::Vector4::new(v_nom, T::from_fixed(ZERO), T::from_fixed(ZERO), T::from_fixed(ZERO)),
+        x: na::Vector4::new(T::from_fixed(ONE), T::from_fixed(ZERO), T::from_fixed(ZERO), T::from_fixed(ZERO)),
         theta_idx: ThetaIdx {has_theta: true, theta_idx: 1},
         mp,
         mq,
@@ -95,12 +91,10 @@ pub fn build_droop_controller<T: Num>(v_nom: T, w_nom: T, s_rated: T, mp: T, mq:
     }
 }
 
-pub fn build_default_droop_controller<T: Num>(v_nom: T, f_nom: T) -> DroopController<T> {
+pub fn build_default_droop_controller<T: Num>(v_nom: T, f_nom: T) -> DroopController<T> {  //TODO: Per-unitize this
     DroopController {
         v_nom,
-        x_nom: T::from_num(1),
         w_nom:  T::from_fixed(2 * PI) * f_nom,
-        s_rated: T::from_num(1000),
         v: v_nom,  
         theta: T::from_num(0),
         p_filt: T::from_num(0),
@@ -115,22 +109,20 @@ pub fn build_default_droop_controller<T: Num>(v_nom: T, f_nom: T) -> DroopContro
     }
 }
 
-pub fn build_droop_controller_from_flt<T: Num>(v_nom: f32, f_nom: f32, s_rated: f32, mp: f32, mq: f32, f_c: f32) -> DroopController<T> {
+pub fn build_droop_controller_from_flt<T: Num>(v_nom: f32, f_nom: f32, mp: f32, mq: f32, f_c: f32) -> DroopController<T> {
     let w_nom = T::from_num(2. * f_nom) * T::from_fixed(PI);
     DroopController {
         v_nom: T::from_num(v_nom),
-        x_nom: T::from_fixed(ONE),
         w_nom,
-        s_rated: T::from_num(s_rated),
-        v: T::from_num(v_nom),  
+        v: T::from_fixed(ONE),  
         theta: T::from_fixed(ZERO),
         p_filt: T::from_fixed(ZERO),
         q_filt: T::from_fixed(ZERO),
-        x: na::Vector4::new(T::from_num(v_nom), T::from_fixed(ZERO), T::from_fixed(ZERO), T::from_fixed(ZERO)),
+        x: na::Vector4::new(T::from_fixed(ONE), T::from_fixed(ZERO), T::from_fixed(ZERO), T::from_fixed(ZERO)),
         theta_idx: ThetaIdx {has_theta: true, theta_idx: 1},
         mp: T::from_num(mp),
         mq: T::from_num(mq),
-        w_c: T::from_num(f_c) * T::from_fixed(2*PI),
+        w_c: T::from_num(2.*f_c) * T::from_fixed(PI), // / w_nom,
         p_ref: T::from_fixed(ZERO),
         q_ref: T::from_fixed(ZERO),
     }
