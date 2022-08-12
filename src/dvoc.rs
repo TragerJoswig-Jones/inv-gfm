@@ -20,7 +20,6 @@ pub struct DvocController<T: Num> {
     pub v_nom: T, // nominal voltage (V)
     x_nom: T, // nominal voltage (p.u.)
     pub w_nom: T, // nominal frequency (rad)
-    pub s_rated: T,  // maximum expected power output (VA)
     pub kv: T, // Base voltage (V)
     xi: T,
     c: T,  // Oscillator capacitance (F)
@@ -66,18 +65,17 @@ impl<T: Num> XState<T, DVOC_STATES, DVOC_INPUTS> for DvocController<T> {
 impl<T: Num> DvocController<T> {
     // Sets the reference active power within the dVOC controller
     // # Arguments
-    // * 'p_ref' - The desired active power reference in Watts
+    // * 'p_ref' - The desired active power reference in p.u.
     pub fn set_p_ref(&mut self, p_ref: T) {
-        self.p_ref = p_ref / self.s_rated;
+        self.p_ref = p_ref;
     }
 }
 
-pub fn build_dvoc_controller<T: Num>(v_nom: T, w_nom: T, s_rated: T, xi: T, c: T) -> DvocController<T> {
+pub fn build_dvoc_controller<T: Num>(v_nom: T, w_nom: T, xi: T, c: T) -> DvocController<T> {
     DvocController {
         v_nom,
         x_nom: T::from_fixed(ONE),
         w_nom,
-        s_rated,
         v: T::from_fixed(ONE),  
         theta: T::from_fixed(ZERO),
         x: na::Vector2::new(T::from_fixed(ONE), T::from_fixed(ZERO)),
@@ -95,7 +93,6 @@ pub fn build_default_dvoc_controller<T: Num>(v_nom: T, f_nom: T) -> DvocControll
         v_nom,
         x_nom: T::from_fixed(ONE),
         w_nom: T::from_fixed(TWO*PI) * f_nom,
-        s_rated: T::from_num(1000),
         v: T::from_fixed(ONE),  
         theta: T::from_fixed(ZERO),
         x: na::Vector2::new(T::from_fixed(ONE), T::from_fixed(ZERO)),
@@ -108,13 +105,12 @@ pub fn build_default_dvoc_controller<T: Num>(v_nom: T, f_nom: T) -> DvocControll
     }
 }
 
-pub fn build_dvoc_controller_from_flt<T: Num>(v_nom: f32, f_nom: f32, s_rated: f32, xi: f32, c: f32) -> DvocController<T> {
+pub fn build_dvoc_controller_from_flt<T: Num>(v_nom: f32, f_nom: f32, xi: f32, c: f32) -> DvocController<T> {
     let w_nom = T::from_num(2. * f_nom) * T::from_fixed(PI);
     DvocController {
         v_nom: T::from_num(v_nom),
         x_nom: T::from_fixed(ONE),
         w_nom,
-        s_rated: T::from_num(s_rated),
         v: T::from_fixed(ONE),  
         theta: T::from_fixed(ZERO),
         x: na::Vector2::new(T::from_fixed(ONE), T::from_fixed(ZERO)),

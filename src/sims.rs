@@ -150,7 +150,6 @@ pub struct ACVoltSrc<T: Num> {
     // Parameters
     pub v_nom: T, // nominal RMS LN voltage (V)
     pub w_nom: T, // nominal frequency (rad)
-    pub s_rated: T,  // maximum expected power output (VA)
     
     // Internal States
     pub v: T,  // alpha current state (p.u.)
@@ -185,12 +184,11 @@ impl<T: Num> XState<T, ACVS_STATES, ACVS_INPUTS> for ACVoltSrc<T> {
     }
 }
 
-pub fn build_ac_volt_src<T: Num>(v_nom: T, w_nom: T, s_rated: T) -> ACVoltSrc<T> {
+pub fn build_ac_volt_src<T: Num>(v_nom: T, w_nom: T) -> ACVoltSrc<T> {
     ACVoltSrc {
         // Parameters
         v_nom,
         w_nom,
-        s_rated,
         
         // Internal States
         v: T::from_fixed(ONE),
@@ -200,13 +198,12 @@ pub fn build_ac_volt_src<T: Num>(v_nom: T, w_nom: T, s_rated: T) -> ACVoltSrc<T>
     }
 }
 
-pub fn build_ac_volt_src_from_flt<T: Num>(v_nom: f32, f_nom: f32, s_rated: f32) -> ACVoltSrc<T> {
+pub fn build_ac_volt_src_from_flt<T: Num>(v_nom: f32, f_nom: f32) -> ACVoltSrc<T> {
     let v_nom = T::from_num(v_nom);
     ACVoltSrc {
         // Parameters
         v_nom,
         w_nom: T::from_num(2. * f_nom) * T::from_fixed(PI),
-        s_rated: T::from_num(s_rated),
         
         // Internal States
         v: T::from_fixed(ONE),
