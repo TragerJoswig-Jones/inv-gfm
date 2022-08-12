@@ -28,19 +28,19 @@ pub struct ThetaIdx {
     pub theta_idx: usize,
 }
 
-impl<D, T: Num, const X: usize, const U: usize> RK2Step<T, X, U> for D where D: XState<T, X, U> + Dynamics<T, X, U>{
+impl<D, const X: usize, const U: usize> RK2Step<f32, X, U> for D where D: XState<f32, X, U> + Dynamics<f32, X, U>{
     // Steps the dynamics using a 2nd-order Runge-Kutta method
     // # Arguments
     // * 'u' - inputs (p.u.) as an array of T values: [input1, input2, ...]
-    fn step(&mut self, dt: T, u: [T; U]) {
+    fn step(&mut self, dt: f32, u: [f32; U]) {
         let x = self.get_x();
         let dx_dt1 = self.dynamics(x, u);  //TODO: Replace dx_dt with reference to vector within the object?
         let dx_dt2 = self.dynamics(&(x + dx_dt1 * dt), u);  
-        let dx_dt = (dx_dt1 + dx_dt2) * T::from_fixed(ONE_HALF); // TODO: Use a smaller fractional fixed-point number for dx_dt values?
+        let dx_dt = (dx_dt1 + dx_dt2) * 0.5; // TODO: Use a smaller fractional fixed-point number for dx_dt values?
         let mut x1 = x + dx_dt * dt;  //TODO: Test if &mut x would allow for direct modification of elements of the state vector allowing us to avoid creating x1 here
         let theta_idx = self.get_theta_idx();
         if  theta_idx.has_theta {
-            x1[(theta_idx.theta_idx)] = x1[(theta_idx.theta_idx)] % (T::from_fixed(TWO) * T::from_fixed(PI) / self.get_w_nom());
+            x1[(theta_idx.theta_idx)] = x1[(theta_idx.theta_idx)] % (2. * PI / self.get_w_nom());
         }
         self.set_x(x1);
     }
@@ -51,13 +51,13 @@ pub trait NoInputStep<T, const X: usize, const U: usize>{
     fn step_(&mut self, dt: T) -> ();
 }
 
-impl<D, T: Num, const X: usize, const U: usize> NoInputStep<T, X, U> for D where D: RK2Step<T, X, U> + Dynamics<T, X, U>{
+impl<D, const X: usize, const U: usize> NoInputStep<f32, X, U> for D where D: RK2Step<f32, X, U> + Dynamics<f32, X, U>{
     // Steps the dVOC dynamics
     // # Arguments
     // * 'dt' - The step period in seconds (1 / fs)
     // * 'u' - An empty array as there are no inputs
-    fn step_(&mut self, dt: T) {
-        self.step(dt, [T::from_fixed(ZERO); U]);
+    fn step_(&mut self, dt: f32) {
+        self.step(dt, [0.; U]);
     }
 }
 
@@ -78,12 +78,12 @@ pub struct RLFilter<T: Num> {
     theta_idx: ThetaIdx, // -1 for RLFilter
 }
 
-impl<T: Num> Dynamics<T, LINE_STATES, LINE_INPUTS> for RLFilter<T> {
+impl Dynamics<f32, LINE_STATES, LINE_INPUTS> for RLFilter<f32> {
     // Calculates the p.u. current dynamics for the RL line using the given input, u.
     // # Arguments    
     // * 'x' - internal states as an array of T values: (i_alpha, i_beta)
     // * 'u' - input voltages as an array of T values: (v1, theta1, v2, theta2)
-    fn dynamics(&self, x: &LineStates<T>, u: [T; LINE_INPUTS]) -> LineStates<T> {
+    fn dynamics(&self, x: &LineStates<f32>, u: [f32; LINE_INPUTS]) -> LineStates<f32> {
         let (v1, theta1, v2, theta2) = (u[0], u[1], u[2], u[3]);
         let v1_ab = AlphaBeta::from_polar(v1, theta1);
         let v2_ab = AlphaBeta::from_polar(v2, theta2);
@@ -113,7 +113,7 @@ impl<T: Num> XState<T, LINE_STATES, LINE_INPUTS> for RLFilter<T> {
     }
 }
 
-pub fn build_rl_line<T: Num>(w_nom: T, rf: T, lf: T) -> RLFilter<T> {
+pub fn build_rl_line(w_nom: f32, rf: f32, lf: f32) -> RLFilter<f32> {
     RLFilter {
         // RL Filter Parameters
         w_nom,
@@ -121,23 +121,9 @@ pub fn build_rl_line<T: Num>(w_nom: T, rf: T, lf: T) -> RLFilter<T> {
         lf,
 
         // Internal States
-        i_alpha: T::from_fixed(ZERO),
-        i_beta: T::from_fixed(ZERO),
-        x: na::Vector2::new(T::from_fixed(ZERO), T::from_fixed(ZERO)),
-        theta_idx: ThetaIdx {has_theta: false, theta_idx: 1},
-    }
-}
-pub fn build_rl_line_from_flt<T: Num>(f_nom: f32, rf: f32, lf: f32) -> RLFilter<T> {
-    RLFilter {
-        // RL Filter Parameters
-        w_nom: T::from_num(2. * f_nom) * T::from_fixed(PI),
-        rf: T::from_num(rf),
-        lf: T::from_num(lf),
-
-        // Internal States
-        i_alpha: T::from_fixed(ZERO),
-        i_beta: T::from_fixed(ZERO),
-        x: na::Vector2::new(T::from_fixed(ZERO), T::from_fixed(ZERO)),
+        i_alpha: 0.,
+        i_beta: 0.,
+        x: na::Vector2::new(0., 0.),
         theta_idx: ThetaIdx {has_theta: false, theta_idx: 1},
     }
 }
@@ -158,13 +144,13 @@ pub struct ACVoltSrc<T: Num> {
     theta_idx: ThetaIdx,
 }
 
-impl<T: Num> Dynamics<T, ACVS_STATES, ACVS_INPUTS> for ACVoltSrc<T> {
+impl Dynamics<f32, ACVS_STATES, ACVS_INPUTS> for ACVoltSrc<f32> {
     // Calculates the p.u. voltage dynamics of the dVOC controller using the given input, u.
     // # Arguments    
     // * 'x' - polar voltage (p.u.) as a tuple of T values: (v, theta)
     // * 'u' - An empty array as there are no inputs
-    fn dynamics(&self, _x: &ACVSStates<T>, _u: [T; ACVS_INPUTS]) -> ACVSStates<T> {
-        return na::Vector2::new(T::from_fixed(ZERO), T::from_fixed(ONE))
+    fn dynamics(&self, _x: &ACVSStates<f32>, _u: [f32; ACVS_INPUTS]) -> ACVSStates<f32> {
+        return na::Vector2::new(0., 1.)
     }
 }
 
@@ -184,32 +170,16 @@ impl<T: Num> XState<T, ACVS_STATES, ACVS_INPUTS> for ACVoltSrc<T> {
     }
 }
 
-pub fn build_ac_volt_src<T: Num>(v_nom: T, w_nom: T) -> ACVoltSrc<T> {
+pub fn build_ac_volt_src(v_nom: f32, w_nom: f32) -> ACVoltSrc<f32> {
     ACVoltSrc {
         // Parameters
         v_nom,
         w_nom,
         
         // Internal States
-        v: T::from_fixed(ONE),
-        theta: T::from_fixed(ZERO),
-        x: na::Vector2::new(T::from_fixed(ONE), T::from_fixed(ZERO)),
+        v: 1.,
+        theta: 0.,
+        x: na::Vector2::new(1., 0.),
         theta_idx: ThetaIdx {has_theta: true, theta_idx: 1},
     }
 }
-
-pub fn build_ac_volt_src_from_flt<T: Num>(v_nom: f32, f_nom: f32) -> ACVoltSrc<T> {
-    let v_nom = T::from_num(v_nom);
-    ACVoltSrc {
-        // Parameters
-        v_nom,
-        w_nom: T::from_num(2. * f_nom) * T::from_fixed(PI),
-        
-        // Internal States
-        v: T::from_fixed(ONE),
-        theta: T::from_fixed(ZERO),
-        x: na::Vector2::new(T::from_fixed(ONE), T::from_fixed(ZERO)),
-        theta_idx: ThetaIdx {has_theta: true, theta_idx: 1},
-    }
-}
-
