@@ -19,7 +19,7 @@ pub struct DvocController<T: Num> {
     // Other Parameters
     pub v_nom: T, // nominal voltage (V)
     x_nom: T, // nominal voltage (p.u.)
-    pub w_nom: T, // nominal frequency (rad)
+    pub w_nom: T, // nominal frequency (rad/s)
     pub kv: T, // Base voltage (V)
     xi: T,
     c: T,  // Oscillator capacitance (F)
@@ -41,7 +41,7 @@ impl<T: Num> Dynamics<T, DVOC_STATES, DVOC_INPUTS> for DvocController<T> {
         // Per unit dynamics (eq.26 from 'A Grid-compatible Virtual Oscillator Controller')
         let _sqrt2cv = T::from_fixed(ONE) / (T::from_fixed(SQRT_2) * self.c * x[0]);
         let dv_dt = T::from_fixed(TWO) * self.xi * x[0] * ((self.x_nom * self.x_nom ) - (x[0] * x[0])) - _sqrt2cv * (q - self.q_ref);
-        let dtheta_dt = T::from_fixed(ONE) - _sqrt2cv / (x[0] * self.w_nom) * (p - self.p_ref); 
+        let dtheta_dt = T::from_fixed(ONE) - _sqrt2cv / x[0] / self.w_nom * (p - self.p_ref); 
         return na::Vector2::new(dv_dt, dtheta_dt)
     }
 }
