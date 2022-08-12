@@ -1,6 +1,5 @@
 // Functions for standard calculations
 use super::refs::*;
-use super::constants::*;
 use super::*;
 
 /* FIXED-POINT IMPLEMENTATIONS */

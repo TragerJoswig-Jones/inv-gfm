@@ -51,7 +51,7 @@ impl<T: Num> Dynamics<T, DROOP_STATES, DROOP_INPUTS> for DroopController<T> {
 }
 
 // Implement functions for getting and setting the states of the dVOC object
-impl<T: Num> XState<T, DROOP_STATES, DROOP_INPUTS> for DroopController<T> {
+impl<T: Num> XState<T, DROOP_STATES, DROOP_INPUTS> for DroopController<T> {  // TODO: Implement XState trait with a macro as it is the same for each object
     fn get_x(&self) -> &nalgebra::SVector<T, DROOP_STATES> {
         return &self.x
     }
@@ -60,6 +60,9 @@ impl<T: Num> XState<T, DROOP_STATES, DROOP_INPUTS> for DroopController<T> {
     }
     fn get_theta_idx(&self) -> &ThetaIdx {
         return &self.theta_idx
+    }
+    fn get_w_nom(&self) -> T {
+        return self.w_nom
     }
 }
 
