@@ -17,9 +17,9 @@ pub struct DvocController<T: Num> {
     theta_idx: ThetaIdx, // index of theta value; 1 for dVOC states
 
     // Other Parameters
-    pub v_nom: T, // nominal voltage (V)
+    pub v_nom: T, // nominal voltage (V)  // TODO: Determine if v_nom should be stored as a float and only used for per-unit calcs?
     x_nom: T, // nominal voltage (p.u.)
-    pub w_nom: T, // nominal frequency (rad/s)
+    pub f_nom: T, // nominal frequency (Hz)
     pub kv: T, // Base voltage (V)
     xi: T,
     c: T,  // Oscillator capacitance (F)
@@ -33,7 +33,7 @@ impl<T: Num> Dynamics<T, DVOC_STATES, DVOC_INPUTS> for DvocController<T> {
     // * 'x' - polar voltage (p.u.) as an array of T fixed-point values: [v, theta]
     // * 'u' - alpha-beta current (p.u.) as an array of T fixed-point values: [ialpha, ibeta]
     fn dynamics(&self, x:  &DvocStates<T>, u: [T; DVOC_INPUTS]) -> DvocStates<T> {
-        let (v, theta) = (x[0], x[1] * self.w_nom);
+        let (v, theta) = (x[0], T::from_fixed(TWO)*T::from_fixed(PI) * x[1] * self.f_nom);
         let v_dq = DQZ{ d: v * T::from_fixed(SQRT_2), q: T::from_fixed(ZERO), z: T::from_fixed(ZERO)};  // TODO: Determine the best way to handle multiplying by a constant
         let i_dq = AlphaBeta::from_ab_(u[0], u[1]).to_dqz(SinCos::<T>::from_theta(theta));
         let (p, q) = calc_dq_power(v_dq, i_dq);
@@ -41,7 +41,7 @@ impl<T: Num> Dynamics<T, DVOC_STATES, DVOC_INPUTS> for DvocController<T> {
         // Per unit dynamics (eq.26 from 'A Grid-compatible Virtual Oscillator Controller')
         let _sqrt2cv = T::from_fixed(ONE) / (T::from_fixed(SQRT_2) * self.c * x[0]);
         let dv_dt = T::from_fixed(TWO) * self.xi * x[0] * ((self.x_nom * self.x_nom ) - (x[0] * x[0])) - _sqrt2cv * (q - self.q_ref);
-        let dtheta_dt = T::from_fixed(ONE) - _sqrt2cv / x[0] / self.w_nom * (p - self.p_ref); 
+        let dtheta_dt = T::from_fixed(ONE) - _sqrt2cv / x[0] / T::from_fixed(TWO) / T::from_fixed(PI) / self.f_nom * (p - self.p_ref); 
         return na::Vector2::new(dv_dt, dtheta_dt)
     }
 }
@@ -57,8 +57,8 @@ impl<T: Num> XState<T, DVOC_STATES, DVOC_INPUTS> for DvocController<T> {
     fn get_theta_idx(&self) -> &ThetaIdx {
         return &self.theta_idx
     }
-    fn get_w_nom(&self) -> T {
-        return self.w_nom
+    fn get_f_nom(&self) -> T {
+        return self.f_nom
     }
 }
 
@@ -71,11 +71,11 @@ impl<T: Num> DvocController<T> {
     }
 }
 
-pub fn build_dvoc_controller<T: Num>(v_nom: T, w_nom: T, xi: T, c: T) -> DvocController<T> {
+pub fn build_dvoc_controller<T: Num>(v_nom: T, f_nom: T, xi: T, c: T) -> DvocController<T> {
     DvocController {
         v_nom,
         x_nom: T::from_fixed(ONE),
-        w_nom,
+        f_nom,
         v: T::from_fixed(ONE),  
         theta: T::from_fixed(ZERO),
         x: na::Vector2::new(T::from_fixed(ONE), T::from_fixed(ZERO)),
@@ -92,7 +92,7 @@ pub fn build_default_dvoc_controller<T: Num>(v_nom: T, f_nom: T) -> DvocControll
     DvocController {
         v_nom,
         x_nom: T::from_fixed(ONE),
-        w_nom: T::from_fixed(TWO*PI) * f_nom,
+        f_nom,
         v: T::from_fixed(ONE),  
         theta: T::from_fixed(ZERO),
         x: na::Vector2::new(T::from_fixed(ONE), T::from_fixed(ZERO)),
@@ -106,11 +106,11 @@ pub fn build_default_dvoc_controller<T: Num>(v_nom: T, f_nom: T) -> DvocControll
 }
 
 pub fn build_dvoc_controller_from_flt<T: Num>(v_nom: f32, f_nom: f32, xi: f32, c: f32) -> DvocController<T> {
-    let w_nom = T::from_num(2. * f_nom) * T::from_fixed(PI);
+    //let w_nom = T::from_num(2. * f_nom) * T::from_fixed(PI);
     DvocController {
         v_nom: T::from_num(v_nom),
         x_nom: T::from_fixed(ONE),
-        w_nom,
+        f_nom: T::from_num(f_nom),
         v: T::from_fixed(ONE),  
         theta: T::from_fixed(ZERO),
         x: na::Vector2::new(T::from_fixed(ONE), T::from_fixed(ZERO)),

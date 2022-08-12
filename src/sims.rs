@@ -16,7 +16,7 @@ pub trait XState<T: Num, const X: usize, const U: usize>{
     fn get_x(&self) -> &Vec<T, X>;
     fn set_x(&mut self, x: Vec<T, X>);
     fn get_theta_idx(&self) -> &ThetaIdx;
-    fn get_w_nom(&self) -> T;
+    fn get_f_nom(&self) -> T;
 }
 
 pub trait RK2Step<T: Num, const X: usize, const U: usize>{
@@ -40,7 +40,7 @@ impl<D, T: Num, const X: usize, const U: usize> RK2Step<T, X, U> for D where D: 
         let mut x1 = x + dx_dt * dt;  //TODO: Test if &mut x would allow for direct modification of elements of the state vector allowing us to avoid creating x1 here
         let theta_idx = self.get_theta_idx();
         if  theta_idx.has_theta {
-            x1[(theta_idx.theta_idx)] = x1[(theta_idx.theta_idx)] % (T::from_fixed(TWO) * T::from_fixed(PI) / self.get_w_nom());
+            x1[(theta_idx.theta_idx)] = x1[(theta_idx.theta_idx)] % (T::from_fixed(ONE) / self.get_f_nom());
         }
         self.set_x(x1);
     }
@@ -67,7 +67,7 @@ const LINE_INPUTS: usize = 4;
 type LineStates<T> =  Vec<T, LINE_STATES>;
 pub struct RLFilter<T: Num> {
     // RL Filter Parameters
-    pub w_nom: T, // nominal frequency (rad)
+    pub f_nom: T, // nominal frequency (rad)
     rf: T,  // Line resistance (p.u.)
     lf: T,  // Line inductance (p.u.)
 
@@ -108,15 +108,15 @@ impl<T: Num> XState<T, LINE_STATES, LINE_INPUTS> for RLFilter<T> {
     fn get_theta_idx(&self) -> &ThetaIdx {
         return &self.theta_idx
     }
-    fn get_w_nom(&self) -> T {
-        return self.w_nom
+    fn get_f_nom(&self) -> T {
+        return self.f_nom
     }
 }
 
-pub fn build_rl_line<T: Num>(w_nom: T, rf: T, lf: T) -> RLFilter<T> {
+pub fn build_rl_line<T: Num>(f_nom: T, rf: T, lf: T) -> RLFilter<T> {
     RLFilter {
         // RL Filter Parameters
-        w_nom,
+        f_nom,
         rf,
         lf,
 
@@ -130,7 +130,7 @@ pub fn build_rl_line<T: Num>(w_nom: T, rf: T, lf: T) -> RLFilter<T> {
 pub fn build_rl_line_from_flt<T: Num>(f_nom: f32, rf: f32, lf: f32) -> RLFilter<T> {
     RLFilter {
         // RL Filter Parameters
-        w_nom: T::from_num(2. * f_nom) * T::from_fixed(PI),
+        f_nom: T::from_num(f_nom),
         rf: T::from_num(rf),
         lf: T::from_num(lf),
 
@@ -149,7 +149,7 @@ type ACVSStates<T> =  Vec<T, ACVS_STATES>;
 pub struct ACVoltSrc<T: Num> {
     // Parameters
     pub v_nom: T, // nominal RMS LN voltage (V)
-    pub w_nom: T, // nominal frequency (rad)
+    pub f_nom: T, // nominal frequency (Hz)
     
     // Internal States
     pub v: T,  // alpha current state (p.u.)
@@ -179,16 +179,16 @@ impl<T: Num> XState<T, ACVS_STATES, ACVS_INPUTS> for ACVoltSrc<T> {
     fn get_theta_idx(&self) -> &ThetaIdx {
         return &self.theta_idx
     }
-    fn get_w_nom(&self) -> T {
-        return self.w_nom
+    fn get_f_nom(&self) -> T {
+        return self.f_nom
     }
 }
 
-pub fn build_ac_volt_src<T: Num>(v_nom: T, w_nom: T) -> ACVoltSrc<T> {
+pub fn build_ac_volt_src<T: Num>(v_nom: T, f_nom: T) -> ACVoltSrc<T> {
     ACVoltSrc {
         // Parameters
         v_nom,
-        w_nom,
+        f_nom,
         
         // Internal States
         v: T::from_fixed(ONE),
@@ -203,7 +203,7 @@ pub fn build_ac_volt_src_from_flt<T: Num>(v_nom: f32, f_nom: f32) -> ACVoltSrc<T
     ACVoltSrc {
         // Parameters
         v_nom,
-        w_nom: T::from_num(2. * f_nom) * T::from_fixed(PI),
+        f_nom: T::from_num(f_nom),
         
         // Internal States
         v: T::from_fixed(ONE),

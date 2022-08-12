@@ -4,12 +4,12 @@ use crate::dvoc::*;
 #[test]
 fn test_dvoc_params() {
     let v_nom: f32 = 80.;
-    let w_nom: f32 = 60.;
+    let f_nom: f32 = 60.;
     let xi: f32 = 15.;
     let c: f32 = 0.2679;
-    let dvoc = build_dvoc_controller_from_flt::<fx::types::I16F16>(v_nom, w_nom, xi, c);
+    let dvoc = build_dvoc_controller_from_flt::<fx::types::I16F16>(v_nom, f_nom, xi, c);
     assert_eq!(dvoc.v_nom, v_nom);
-    assert_eq!(dvoc.w_nom, w_nom);
+    assert_eq!(dvoc.f_nom, f_nom);
 }
 
 #[test]
