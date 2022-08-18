@@ -1,14 +1,14 @@
-/* Dispatchable Virtual Oscillator Controller (dVOC) implementation */
 use super::calc::*;
 use super::constants::*;
 use super::refs::*;
 use super::sims::*;
 use super::*;
 
-/* Define a dVOC controller */
+/* Dispatchable Virtual Oscillator Controller (dVOC) implementation */
 const DVOC_STATES: usize = 2;
 const DVOC_INPUTS: usize = 2;
 type DvocStates<T> =  Vec<T, DVOC_STATES>;
+/* Define a dVOC controller */
 pub struct DvocController<T: Num> {
     // Internal States
     pub v: T,  // voltage state (p.u.)

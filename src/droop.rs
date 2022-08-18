@@ -1,14 +1,15 @@
-/* Droop controller implementation */
+
 use super::calc::*;
 use super::constants::*;
 use super::refs::*;
 use super::sims::*;
 use super::*;
 
-/* Define a droop controller */
+/* Droop controller implementation */
 const DROOP_STATES: usize = 4;
 const DROOP_INPUTS: usize = 2;
 type DroopStates<T> =  Vec<T, DROOP_STATES>;
+/* Define a droop controller */
 pub struct DroopController<T: Num> {
     // Internal States
     pub v: T,  // voltage state (p.u.)

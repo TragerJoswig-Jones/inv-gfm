@@ -9,8 +9,7 @@ use core::ops::{Add, Sub, Mul, Div, Rem};
 /* unifi-gfm crate modules */
 pub mod calc;
 pub mod constants;
-pub mod dvoc;
-pub mod droop;
+pub mod gfm;
 pub mod refs;
 pub mod sims;
 #[cfg(test)]
@@ -26,4 +25,4 @@ pub trait Num<Rhs = Self, Output = Self>: Add<Rhs, Output = Output>
                                         + Copy
 {}  // (https://stackoverflow.com/questions/40776020/is-there-any-way-to-restrict-a-generic-type-to-one-of-several-types)
 impl Num for f32 {}
-// TODO: Add support for f64?
+impl Num for f64 {}
