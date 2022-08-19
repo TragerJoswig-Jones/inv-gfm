@@ -198,10 +198,60 @@ pub trait ToFromDQZ<T: Num> {
     fn to_dqz(&self, sin_cos: SinCos<T>) -> DQZ<T>;
     fn from_dqz(d: T, q: T, z: T, sin_cos: SinCos<T>) -> Self;
 }
-// TODO: Should we implement ToFrom functions for the DQZ structure? 
-//       The issue is that DQZ transforms require a reference angle.
-//       If not constructing a DQZ struct will have to be done from 
-//       an existing reference frame struct.
+// Implement ToFrom functions with all other ref frames for the DQZ structure
+impl DQZ<f32> {
+    /* ABC */
+    pub fn from_abc(a: f32, b: f32, c: f32, sin_cos: &SinCos<f32>) -> DQZ<f32> {
+        let left = sin_cos.rotate_left_120();
+        let right = sin_cos.rotate_right_120();
+        DQZ {
+            d: TWO_THIRDS * (sin_cos.sin_val * a + left.sin_val * b + right.sin_val * c),
+            q: TWO_THIRDS * (sin_cos.cos_val * a + left.cos_val * b + right.cos_val * c),
+            z: ONE_THIRD * (a + b + c),
+        }
+    }
+    pub fn to_abc(&self, sin_cos: &SinCos<f32>) -> ABC<f32> {
+        let left = sin_cos.rotate_left_120();
+        let right = sin_cos.rotate_left_120();
+        ABC { a: sin_cos.sin_val * self.d + sin_cos.cos_val * self.q + self.z,
+              b: left.sin_val * self.d + left.cos_val * self.q + self.z, 
+              c: right.sin_val * self.d + right.cos_val * self.q + self.z,
+            }
+    }
+    /* Polar */
+    pub fn to_polar(&self, sin_cos: &SinCos<f32>) -> Polar<f32> {
+        if self.z != 0. {
+            panic!("Cannot create a Polar value from unbalanced three-phase ABC values! Got {} as the DQZ zero value.", self.z);
+        } else {
+            Polar{ r: libm::sqrtf(libm::powf(self.d, 2.) + libm::powf(self.q, 2.)) / SQRT_2, 
+                   theta: libm::atan2f(self.d * sin_cos.sin_val + self.q * sin_cos.cos_val, self.d * sin_cos.cos_val - self.q * sin_cos.sin_val)
+            }
+        }
+    }
+    pub fn from_polar(r: f32, theta: f32, sin_cos: &SinCos<f32>) -> DQZ<f32> {
+        let sin_cos_thetas = SinCos::<f32>::from_theta(theta + sin_cos.theta);
+        DQZ { d: r * sin_cos_thetas.cos_val,
+              q: r * sin_cos_thetas.sin_val, 
+              z: 0. 
+            }
+    }
+    /* AlphaBeta */
+    pub fn to_ab(&self, sin_cos: &SinCos<f32>) -> AlphaBeta<f32> {
+        return AlphaBeta { alpha: sin_cos.cos_val * self.d - sin_cos.sin_val * self.q, 
+                           beta: sin_cos.sin_val * self.d + sin_cos.cos_val * self.q, 
+                           gamma: self.z }
+    }
+    pub fn from_ab(alpha: f32, beta: f32, gamma: f32, sin_cos: &SinCos<f32>) -> DQZ<f32> {
+        let d = sin_cos.cos_val * alpha + sin_cos.sin_val * beta;
+        let q = sin_cos.cos_val * beta - (sin_cos.sin_val * alpha);
+        let z = gamma;
+        DQZ{ d, q, z }
+    }
+    pub fn from_ab_(alpha: f32, beta: f32, sin_cos: &SinCos<f32>) -> DQZ<f32> {
+        return DQZ::from_ab(alpha, beta, 0., sin_cos)
+    }
+
+}
 
 /* 
 Stores sine and cosine pair values 
