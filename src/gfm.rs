@@ -156,7 +156,7 @@ impl Dynamics<f32, DVOC_STATES, DVOC_INPUTS> for DvocController<f32> {
     fn dynamics(&self, x:  &DvocStates<f32>, u: [f32; DVOC_INPUTS]) -> DvocStates<f32> {
         let (v, theta) = (x[0], x[1] * self.w_nom);
         let v_dq = DQZ{ d: v * SQRT_2, q: 0., z: 0. };  // TODO: Determine the best way to handle multiplying by a constant
-        let i_dq = AlphaBeta::from_ab_(u[0], u[1]).to_dqz(SinCos::<f32>::from_theta(theta));
+        let i_dq = AlphaBeta::from_ab_(u[0], u[1]).to_dqz(&SinCos::<f32>::from_theta(theta));
         let (p, q) = calc_dq_power(&v_dq, &i_dq);
 
         // Per unit dynamics (eq.26 from 'A Grid-compatible Virtual Oscillator Controller')
@@ -278,7 +278,7 @@ impl Dynamics<f32, DROOP_STATES, DROOP_INPUTS> for DroopController<f32> {
     fn dynamics(&self, x: &DroopStates<f32>, u: [f32; DROOP_INPUTS]) -> DroopStates<f32> {
         let (v, theta, p_filt, q_filt) = (x[0], x[1] * self.w_nom, x[2], x[3]);
         let v_dq = DQZ{ d: v * SQRT_2, q: 0., z: 0.};
-        let i_dq = AlphaBeta::from_ab_(u[0], u[1]).to_dqz(SinCos::<f32>::from_theta(theta));
+        let i_dq = AlphaBeta::from_ab_(u[0], u[1]).to_dqz(&SinCos::<f32>::from_theta(theta));
         let (p, q) = calc_dq_power(&v_dq, &i_dq);
 
         // Per-unit dynamics (based on eq.13 & eq.17 from 'Control of Parallel Connected Inverters in Standalone ac Supply Systems' by Chandorkar M., Et al.)
@@ -376,20 +376,33 @@ pub struct DlvController<T: Num> {
     pub lf: T, // filter-side inductance value
     pub cf: T, // filter capacitance value
 
+    pub i_max: T,  // Maximum current to saturate i_ref at
+    pub i_min: T,  // Minimum current to saturate i_ref at
+
     // Internal States
     pub x: DlvcStates<T>,  // [vd int, vq int, id int, iq int]
     theta_idx: ThetaIdx,  // No angular states
 }
 
 impl DlvController<f32> {
+    // Calculates the dynamics of the double-loop voltage controller's integrators using the given input, u.
+    // # Arguments    
+    // * 'x' - An array of state values;    [vd int, vq int, id int, iq int].
+    // * 'u' - An array of input values;    [E; ref voltage magnitude (p.u.), omega; ref voltage frequency (rad), 
+    //                                       Vd_c; cap direct-axis voltage; , Vq_c; cap quad-axis voltage, 
+    //                                       id_f; filter inductor direct-axis current, iq_f; filter inductor quad-axis current,
+    //                                       id_g; grid-side direct-axis current, iq_g; grid-side quad-axis current].
     pub fn output(&self, u: [f32; DLVC_INPUTS]) -> [f32; DLVC_OUTPUTS] {
         let x = &self.x;
         let v_virtual_impedance = [0., 0.];  // TODO: Determine how to implement the virtual impedance / grid-side compensation and get this value here
         let vd_err = u[0] - u[2] - v_virtual_impedance[0];
         let vq_err = - u[3] - v_virtual_impedance[1];
 
-        let id_ref = self.kp_v * vd_err + self.ki_v * x[(0)];  // TODO: Missing FF componenet here using LCL cap and capacitor dq voltage?
-        let iq_ref = self.kp_v * vq_err + self.ki_v * x[(1)];
+        let mut id_ref = self.kp_v * vd_err + self.ki_v * x[(0)];  // TODO: Missing FF componenet here using LCL cap and capacitor dq voltage?
+        let mut iq_ref = self.kp_v * vq_err + self.ki_v * x[(1)];
+        
+        id_ref = id_ref.clamp(self.i_min, self.i_max);
+        iq_ref = iq_ref.clamp(self.i_min, self.i_max);
 
         let id_err = id_ref - u[4];
         let iq_err = iq_ref - u[5];
@@ -409,10 +422,13 @@ impl DlvController<f32> {
         let vd_err = u[0] - u[2] - v_virtual_impedance[0];
         let vq_err = - u[3] - v_virtual_impedance[1];
 
-        let id_ref = self.kp_v * vd_err + self.ki_v * x[(0)];  // TODO: Missing FF componenet here using LCL cap and capacitor dq voltage?
-        let iq_ref = self.kp_v * vq_err + self.ki_v * x[(1)];
+        let mut id_ref = self.kp_v * vd_err + self.ki_v * x[(0)];  // TODO: Missing FF componenet here using LCL cap and capacitor dq voltage?
+        let mut iq_ref = self.kp_v * vq_err + self.ki_v * x[(1)];
+        
+        id_ref = id_ref.clamp(self.i_min, self.i_max);
+        iq_ref = iq_ref.clamp(self.i_min, self.i_max);
 
-        let id_err = id_ref - u[4]; 
+        let id_err = id_ref - u[4];
         let iq_err = iq_ref - u[5];
 
         let vd_ref = self.kp_i * id_err + self.ki_i * x[(2)];
@@ -440,14 +456,17 @@ impl Dynamics<f32, DLVC_STATES, DLVC_INPUTS> for DlvController<f32> {  // TODO: 
     fn dynamics(&self, x: &DlvcStates<f32>, u: [f32; DLVC_INPUTS]) -> DlvcStates<f32> {
         let v_virtual_impedance = [0., 0.];  // TODO: Determine how to implement the virtual impedance / grid-side compensation and get this value here
         let vd_err = u[0] - u[2] - v_virtual_impedance[0];
-        let vq_err = - u[2] - v_virtual_impedance[1];
+        let vq_err = - u[3] - v_virtual_impedance[1];
 
-        let id_ref = self.kp_v * vd_err + self.ki_v * x[(0)];
-        let iq_ref = self.kp_v * vq_err + self.ki_v * x[(1)];
+        let mut id_ref = self.kp_v * vd_err + self.ki_v * x[(0)];  // TODO: Missing FF componenet here using LCL cap and capacitor dq voltage?
+        let mut iq_ref = self.kp_v * vq_err + self.ki_v * x[(1)];
+        
+        id_ref = id_ref.clamp(self.i_min, self.i_max);
+        iq_ref = iq_ref.clamp(self.i_min, self.i_max);
 
         let id_err = id_ref - u[4]; 
         let iq_err = iq_ref - u[5];
-        return na::Vector4::new(vd_err, vq_err, id_err, iq_err)
+        return na::Vector4::new(vd_err, vq_err, id_err, iq_err)  // TODO: Should the integrator track x_err or ki * x_err?
     }
 }
 
@@ -467,7 +486,7 @@ impl<T: Num> XState<T, DLVC_STATES, DLVC_INPUTS> for DlvController<T> {
     }
 }
 
-pub fn build_double_loop_voltage_controller(x_nom: f32, kp_v: f32, ki_v: f32, kp_i: f32, ki_i: f32, lf: f32, cf: f32) -> DlvController<f32> {
+pub fn build_double_loop_voltage_controller(x_nom: f32, kp_v: f32, ki_v: f32, kp_i: f32, ki_i: f32, lf: f32, cf: f32, i_max: f32, i_min: f32) -> DlvController<f32> {
     DlvController {
         // Parameters
         x_nom,
@@ -477,6 +496,9 @@ pub fn build_double_loop_voltage_controller(x_nom: f32, kp_v: f32, ki_v: f32, kp
         ki_i,
         lf,
         cf,
+
+        i_max,
+        i_min,
         
         // Internal States
         x: na::Vector4::new(0., 0., 0., 0.),

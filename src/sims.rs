@@ -41,7 +41,7 @@ impl<D, const X: usize, const U: usize> RK2Step<f32, X, U> for D where D: XState
         let mut x1 = x + dx_dt * dt;  //TODO: Test if &mut x would allow for direct modification of elements of the state vector allowing us to avoid creating x1 here
         let theta_idx = self.get_theta_idx();
         if  theta_idx.has_theta {
-            x1[(theta_idx.theta_idx)] = x1[(theta_idx.theta_idx)] % (2. * PI / self.get_w_nom());
+            x1[(theta_idx.theta_idx)] = x1[(theta_idx.theta_idx)] % (2. * PI / self.get_w_nom());  // TODO: Consider wrapping from PI to -PI instead of from 2PI to 0. This may reduce the largest number encountered here for fixed-point nums
         }
         self.set_x(x1);
         return dx_dt  // TODO: Determine if this should be returned. So far this is only used for the double-loop voltage controller as it requires the dtheta_dt value from a gfm controller
@@ -180,7 +180,7 @@ pub struct RcBranch<T: Num> {
 }
 
 impl Dynamics<f32, RC_STATES, RC_INPUTS> for RcBranch<f32> {
-    // Calculates the p.u. current dynamics for the RC branch using the given input, u.
+    // Calculates the voltage dynamics for the RC branch using the given input, u.
     // # Arguments    
     // * 'x' - internal states as an array of T values: (i_alpha, i_beta)
     // * 'u' - input voltages as an array of T values: (v1, theta1, v2, theta2)
@@ -287,7 +287,8 @@ impl LclFilter<f32> {
         return [self.x[(4)], self.x[(5)]]
     }
     pub fn get_voltage(&self) -> [f32; 2] {
-        return [self.x[(2)], self.x[(3)]]
+        // Calculate the node voltage as sum of cap and rc voltages
+        return [self.x[(2)] + self.rc_branch.rc * (self.x[(0)] - self.x[(4)]), self.x[(3)] + self.rc_branch.rc * (self.x[(1)] - self.x[(5)])]  
     }
 }
 

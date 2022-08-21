@@ -30,7 +30,7 @@ impl ToFromAlphaBeta<f32> for ABC<f32> {
     }
 }
 impl ToFromDQZ<f32> for ABC<f32> {
-    fn to_dqz(&self, sin_cos: SinCos<f32>) -> DQZ<f32> {
+    fn to_dqz(&self, sin_cos: &SinCos<f32>) -> DQZ<f32> {
         let left = sin_cos.rotate_left_120();
         let right = sin_cos.rotate_right_120();
         DQZ {
@@ -39,7 +39,7 @@ impl ToFromDQZ<f32> for ABC<f32> {
             z: ONE_THIRD * (self.a + self.b + self.c),
         }
     }
-    fn from_dqz(d: f32, q: f32, z: f32, sin_cos: SinCos<f32>) -> Self {
+    fn from_dqz(d: f32, q: f32, z: f32, sin_cos: &SinCos<f32>) -> Self {
         let left = sin_cos.rotate_left_120();
         let right = sin_cos.rotate_left_120();
         ABC { a: sin_cos.sin_val * d + sin_cos.cos_val * q + z,
@@ -102,14 +102,14 @@ impl ToFromAlphaBeta<f32> for Polar<f32> {
     }
 }
 impl ToFromDQZ<f32> for Polar<f32> {
-    fn to_dqz(&self, sin_cos: SinCos<f32>) -> DQZ<f32> {
+    fn to_dqz(&self, sin_cos: &SinCos<f32>) -> DQZ<f32> {
         let sin_cos_thetas = SinCos::<f32>::from_theta(self.theta + sin_cos.theta);
         DQZ { d: self.r * sin_cos_thetas.cos_val,
               q: self.r * sin_cos_thetas.sin_val, 
               z: 0. 
             }
     }
-    fn from_dqz(d: f32, q: f32, z: f32, sin_cos: SinCos<f32>) -> Self {
+    fn from_dqz(d: f32, q: f32, z: f32, sin_cos: &SinCos<f32>) -> Self {
         if z != 0. {
             panic!("Cannot create a Polar value from unbalanced three-phase ABC values! Got {} as the DQZ zero value.", z);
         } else {
@@ -173,13 +173,13 @@ impl ToFromPolar<f32> for AlphaBeta<f32> {
     }
 }
 impl<T: Num> ToFromDQZ<T> for AlphaBeta<T> {
-    fn to_dqz(&self, sin_cos: SinCos<T>) -> DQZ<T> {
+    fn to_dqz(&self, sin_cos: &SinCos<T>) -> DQZ<T> {
         let d = sin_cos.cos_val * self.alpha + sin_cos.sin_val * self.beta;
         let q = sin_cos.cos_val * self.beta - (sin_cos.sin_val * self.alpha);
         let z = self.gamma;
         DQZ{ d, q, z }
     }
-    fn from_dqz(d: T, q: T, z: T, sin_cos: SinCos<T>) -> Self {
+    fn from_dqz(d: T, q: T, z: T, sin_cos: &SinCos<T>) -> Self {
         return AlphaBeta { alpha: sin_cos.cos_val * d - sin_cos.sin_val * q, 
                            beta: sin_cos.sin_val * d + sin_cos.cos_val * q, 
                            gamma: z }
@@ -195,8 +195,8 @@ pub struct DQZ<T: Num> {
     pub z: T,
 }
 pub trait ToFromDQZ<T: Num> {
-    fn to_dqz(&self, sin_cos: SinCos<T>) -> DQZ<T>;
-    fn from_dqz(d: T, q: T, z: T, sin_cos: SinCos<T>) -> Self;
+    fn to_dqz(&self, sin_cos: &SinCos<T>) -> DQZ<T>;
+    fn from_dqz(d: T, q: T, z: T, sin_cos: &SinCos<T>) -> Self;
 }
 // Implement ToFrom functions with all other ref frames for the DQZ structure
 impl DQZ<f32> {
