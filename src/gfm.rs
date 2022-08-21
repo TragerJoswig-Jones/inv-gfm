@@ -26,6 +26,8 @@ pub trait GFMInterface<T: Num, const X: usize> {
     fn set_p_ref(&mut self, p_ref: T) -> ();
     fn set_q_ref(&mut self, q_ref: T) -> ();
     // TODO: Should we add get_w_nom and get_v_nom here as well or should this scaling be build into the functions (possibly add get_voltage_pu and set_voltage_pu) 
+    /// Get the voltage reference from the GFM controller
+    fn output(&self) -> [f32; 2];
 }
 
 pub struct GFM<'a, T: Num, const X: usize> {
@@ -117,6 +119,9 @@ impl<'a, const X: usize> GFMInterface<f32, X> for GFM<'a, f32, X> {
     fn set_q_ref(&mut self, q_ref: f32) -> () {
         self.ctrl.set_q_ref(q_ref)
     }
+    fn output(&self) -> [f32; 2] {
+        self.ctrl.output()
+    }
 }
 
 pub fn build_gfm<'a, const X: usize>(ctrl: &'a mut dyn GFMController<f32, X>, gamma: f32) -> GFM<'a, f32, X> {
@@ -207,6 +212,10 @@ impl GFMInterface<f32, DVOC_STATES> for DvocController<f32> {  // TODO: Determin
     fn set_q_ref(&mut self, q_ref: f32) {
         self.q_ref = q_ref;
     }
+    // Returns the reference voltage for the dVOC controller
+    fn output(&self) -> [f32; 2] {
+        self.get_voltage()
+    }
 }
 impl GFMController<f32, DVOC_STATES> for DvocController<f32> {}
 
@@ -247,18 +256,14 @@ pub fn build_default_dvoc_controller(v_nom: f32, f_nom: f32) -> DvocController<f
 /* 
 Droop controller implementation 
 */
-const DROOP_STATES: usize = 4;
+const DROOP_STATES: usize = 3;
 const DROOP_INPUTS: usize = 2;
 type DroopStates<T> =  Vec<T, DROOP_STATES>;
 /* Define a droop controller */
 pub struct DroopController<T: Num> {
     // Internal States
-    pub v: T,  // voltage state (p.u.)
-    pub theta: T, // angle state (p.u.)
-    pub p_filt: T, // low-pass filter active power (p.u.)
-    pub q_filt: T, // low-pass filter reactive power (p.u.)
-    pub x: DroopStates<T>,
-    theta_idx: ThetaIdx,
+    pub x: DroopStates<T>,  // [theta: angle state (p.u.), p_filt: low-pass filter active power (p.u.), q_filt: low-pass filter reactive power (p.u.)]
+    theta_idx: ThetaIdx,  // Theta index is 0
     
     // Other Parameters
     pub v_nom: T, // nominal voltage (V)
@@ -272,11 +277,12 @@ pub struct DroopController<T: Num> {
 
 impl Dynamics<f32, DROOP_STATES, DROOP_INPUTS> for DroopController<f32> {
     // Calculates the voltage dynamics of the droop controller using the given input, u.
-    // # Arguments    
+    // # Arguments
     // * 'x' - polar voltage (p.u.) and filtered powers as a tuple of f32 values: (v, theta, p_filt, q_filt)
     // * 'u' - alpha-beta current (A) as a tuple of f32 values: (ialpha, ibeta)
     fn dynamics(&self, x: &DroopStates<f32>, u: [f32; DROOP_INPUTS]) -> DroopStates<f32> {
-        let (v, theta, p_filt, q_filt) = (x[0], x[1] * self.w_nom, x[2], x[3]);
+        let (theta, p_filt, q_filt) = (x[0] * self.w_nom, x[1], x[2]);
+        let v = 1. - self.mq * (p_filt - self.p_ref);
         let v_dq = DQZ{ d: v * SQRT_2, q: 0., z: 0.};
         let i_dq = AlphaBeta::from_ab_(u[0], u[1]).to_dqz(&SinCos::<f32>::from_theta(theta));
         let (p, q) = calc_dq_power(&v_dq, &i_dq);
@@ -284,9 +290,8 @@ impl Dynamics<f32, DROOP_STATES, DROOP_INPUTS> for DroopController<f32> {
         // Per-unit dynamics (based on eq.13 & eq.17 from 'Control of Parallel Connected Inverters in Standalone ac Supply Systems' by Chandorkar M., Et al.)
         let dp_filt_dt = self.w_c * (p - p_filt);
         let dq_filt_dt = self.w_c * (q - q_filt);
-        let dv_dt = - self.mq * dq_filt_dt;  // TODO: Determine if there is a better droop control algorithm to use (Calculate voltage outside of this with an output function???)
         let dtheta_dt = 1. - self.mp * (p_filt - self.p_ref);
-        return na::Vector4::new(dv_dt, dtheta_dt, dp_filt_dt, dq_filt_dt)
+        return na::Vector3::new(dtheta_dt, dp_filt_dt, dq_filt_dt)
     }
 }
 
@@ -309,26 +314,34 @@ impl<T: Num> XState<T, DROOP_STATES, DROOP_INPUTS> for DroopController<T> {  // 
 // TODO: Determine if we want to make this implementation a macro as it will be the same for each GFM controller (Note that we cannot implement it on a generic type that includes all GFM controllers unless we want to access the internal parameters through functions which may be slower...)
 impl GFMInterface<f32, DROOP_STATES> for DroopController<f32> {  // TODO: Determine if this can remain based on generic num type T (Issue arises as dynamics of DroopController must be implemented on f32 to use scalars and constants)
     fn get_voltage(&self) -> [f32; 2] {
-        return [self.x[(0)] * self.v_nom, self.x[(1)] * self.w_nom]
+        let v = self.v_nom * (1. - self.mq * (self.x[(2)] - self.q_ref));
+        return [v, self.x[(0)] * self.w_nom]
     }
     fn get_pu_voltage(&self) -> [f32; 2] {
-        return [self.x[(0)], self.x[(1)]] 
+        let v = 1. - self.mq * (self.x[(2)] - self.q_ref);
+        return [v, self.x[(0)]] 
     }
     fn set_voltage(&mut self, v: [f32; 2]) -> () {
-        self.x[(0)] = v[0];  // Sets the voltage magnitude
-        self.x[(1)] = v[1];  // Sets the voltage angle
+        self.x[(0)] = v[1];  // Sets the voltage angle
+        // Note the voltage magnitude is not set as it is directly calculated from Q,filt
     }
-    // Sets the active power reference within the dVOC controller
+    // Sets the active power reference within the droop controller
     // # Arguments
     // * 'p_ref' - The desired active power reference in p.u.
     fn set_p_ref(&mut self, p_ref: f32) {
         self.p_ref = p_ref;
     }
-    // Sets the reactive power reference within the dVOC controller
+    // Sets the reactive power reference within the droop controller
     // # Arguments
     // * 'q_ref' - The desired reactive power reference in p.u.
     fn set_q_ref(&mut self, q_ref: f32) {
         self.q_ref = q_ref;
+    }
+    // Returns the reference voltage for the droop controller
+    fn output(&self) -> [f32; 2] {
+        let v = self.v_nom * (1. - self.mq * (self.x[(3)] - self.q_ref));
+        let theta = self.x[(1)];
+        return [v, theta]
     }
 }
 impl GFMController<f32, DROOP_STATES> for DroopController<f32> {}
@@ -337,12 +350,8 @@ pub fn build_droop_controller(v_nom: f32, w_nom: f32, mp: f32, mq: f32, w_c: f32
     DroopController {
         v_nom,
         w_nom,
-        v: 1.,  
-        theta: 0.,
-        p_filt: 0.,
-        q_filt: 0.,
-        x: na::Vector4::new(1., 0., 0., 0.),
-        theta_idx: ThetaIdx {has_theta: true, theta_idx: 1},
+        x: na::Vector3::new(0., 0., 0.),
+        theta_idx: ThetaIdx {has_theta: true, theta_idx: 0},
         mp,
         mq,
         w_c,
@@ -355,12 +364,8 @@ pub fn build_default_droop_controller(v_nom: f32, f_nom: f32) -> DroopController
     DroopController {
         v_nom,
         w_nom: 2. * PI * f_nom,
-        v: 1.,  
-        theta: 0.,
-        p_filt: 0.,
-        q_filt: 0.,
-        x: na::Vector4::new(1., 0., 0., 0.),
-        theta_idx: ThetaIdx {has_theta: true, theta_idx: 1},
+        x: na::Vector3::new(0., 0., 0.),
+        theta_idx: ThetaIdx {has_theta: true, theta_idx: 0},
         mp: 0.0026,
         mq: 0.005,
         w_c: 2.*PI*30.,
