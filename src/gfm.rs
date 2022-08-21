@@ -284,7 +284,7 @@ impl Dynamics<f32, DROOP_STATES, DROOP_INPUTS> for DroopController<f32> {
         // Per-unit dynamics (based on eq.13 & eq.17 from 'Control of Parallel Connected Inverters in Standalone ac Supply Systems' by Chandorkar M., Et al.)
         let dp_filt_dt = self.w_c * (p - p_filt);
         let dq_filt_dt = self.w_c * (q - q_filt);
-        let dv_dt = - self.mq * dq_filt_dt;
+        let dv_dt = - self.mq * dq_filt_dt;  // TODO: Determine if there is a better droop control algorithm to use (Calculate voltage outside of this with an output function???)
         let dtheta_dt = 1. - self.mp * (p_filt - self.p_ref);
         return na::Vector4::new(dv_dt, dtheta_dt, dp_filt_dt, dq_filt_dt)
     }
@@ -306,14 +306,32 @@ impl<T: Num> XState<T, DROOP_STATES, DROOP_INPUTS> for DroopController<T> {  // 
     }
 }
 
-impl<T: Num> DroopController<T> {
-    // Sets the reference active power within the droop controller
+// TODO: Determine if we want to make this implementation a macro as it will be the same for each GFM controller (Note that we cannot implement it on a generic type that includes all GFM controllers unless we want to access the internal parameters through functions which may be slower...)
+impl GFMInterface<f32, DROOP_STATES> for DroopController<f32> {  // TODO: Determine if this can remain based on generic num type T (Issue arises as dynamics of DroopController must be implemented on f32 to use scalars and constants)
+    fn get_voltage(&self) -> [f32; 2] {
+        return [self.x[(0)] * self.v_nom, self.x[(1)] * self.w_nom]
+    }
+    fn get_pu_voltage(&self) -> [f32; 2] {
+        return [self.x[(0)], self.x[(1)]] 
+    }
+    fn set_voltage(&mut self, v: [f32; 2]) -> () {
+        self.x[(0)] = v[0];  // Sets the voltage magnitude
+        self.x[(1)] = v[1];  // Sets the voltage angle
+    }
+    // Sets the active power reference within the dVOC controller
     // # Arguments
-    // * 'p_ref' - The desired active power reference in Watts
-    pub fn set_p_ref(&mut self, p_ref: T) {
+    // * 'p_ref' - The desired active power reference in p.u.
+    fn set_p_ref(&mut self, p_ref: f32) {
         self.p_ref = p_ref;
     }
+    // Sets the reactive power reference within the dVOC controller
+    // # Arguments
+    // * 'q_ref' - The desired reactive power reference in p.u.
+    fn set_q_ref(&mut self, q_ref: f32) {
+        self.q_ref = q_ref;
+    }
 }
+impl GFMController<f32, DROOP_STATES> for DroopController<f32> {}
 
 pub fn build_droop_controller(v_nom: f32, w_nom: f32, mp: f32, mq: f32, w_c: f32) -> DroopController<f32> {
     DroopController {
