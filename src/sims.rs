@@ -1,3 +1,5 @@
+use na::zero;
+
 /* Dynamical objects for simulating power systems */
 use crate::constants::*;
 use crate::refs::*;
@@ -81,17 +83,20 @@ pub trait NodeInterface<T: Num, const X: usize>: RK2Step<f32, X, 2> +
 /* 
 Current Edge Interface
 */
-/// The 'EdgeInterface' trait is used to indicate an object that has a current state with dynamics.
-pub trait EdgeInterface<T: Num, const X: usize>: RK2Step<f32, X, 2> + 
-                                                 NoInputStep<f32, X, 2> + 
-                                                 XState<f32, X, 2> 
+/// The 'Line' trait is used to indicate an object that has a current state with dynamics.
+pub trait Line<T: Num, const X: usize>: RK2Step<f32, X, 4> + 
+                                        NoInputStep<f32, X, 4> + 
+                                        XState<f32, X, 4> +
+                                        Dynamics<f32, X, 4>
 {
     /// Returns the current state values of the current edge object
-    fn get_current(&self) -> [T; 2];
-    fn get_pu_current(&self) -> [T; 2];
-    fn set_current(&mut self, v: [T; 2]) -> ();
+    fn get_fr_current(&self) -> [T; 2];
+    fn get_to_current(&self) -> [T; 2];
+    fn get_fr_pu_current(&self) -> [T; 2];
+    fn get_to_pu_current(&self) -> [T; 2];
+    fn set_fr_current(&mut self, i: [T; 2]) -> ();
+    fn set_to_current(&mut self, i: [T; 2]) -> ();
 }
-
 
 /* 
 Define an RL Branch object 
@@ -101,6 +106,7 @@ const RL_INPUTS: usize = 4;
 type RlStates<T> =  Vec<T, RL_STATES>;
 pub struct RlBranch<T: Num> {
     // RL Filter Parameters
+    pub i_base: T, // base current (A)
     pub w_nom: T, // nominal frequency (rad)
     rf: T,  // Line resistance (p.u.)
     lf: T,  // Line inductance (p.u.)
@@ -110,6 +116,22 @@ pub struct RlBranch<T: Num> {
     pub i_beta: T, // beta current state (p.u.)
     pub x: RlStates<T>,
     theta_idx: ThetaIdx, // -1 for RlBranch
+}
+impl<T: Num> RlBranch<T> {
+    pub fn get_current(&self) -> [T; 2] {
+        [self.i_base * self.x[(0)], self.i_base * self.x[(1)]]
+    }
+    pub fn get_pu_current(&self) -> [T; 2] {
+        [self.x[(0)], self.x[(1)]]
+    }
+    pub fn set_current(&mut self, i: [T; 2]) -> () {
+        self.x[(0)] = i[0] / self.i_base;
+        self.x[(1)] = i[1] / self.i_base;
+    }
+    pub fn set_pu_current(&mut self, i: [T; 2]) -> () {
+        self.x[(0)] = i[0];
+        self.x[(1)] = i[1];
+    }
 }
 
 impl Dynamics<f32, RL_STATES, RL_INPUTS> for RlBranch<f32> {
@@ -147,9 +169,32 @@ impl<T: Num> XState<T, RL_STATES, RL_INPUTS> for RlBranch<T> {
     }
 }
 
-pub fn build_rl_branch(w_nom: f32, rf: f32, lf: f32) -> RlBranch<f32> {
+// Implement Line trait for RLBranch
+impl Line<f32, RL_STATES> for RlBranch<f32> {
+    fn get_fr_current(&self) -> [f32; 2] {
+        self.get_current()
+    }
+    fn get_fr_pu_current(&self) -> [f32; 2] {
+        self.get_pu_current()
+    }
+    fn get_to_current(&self) -> [f32; 2] {
+        self.get_current()
+    }
+    fn get_to_pu_current(&self) -> [f32; 2] {
+        self.get_pu_current()
+    }
+    fn set_fr_current(&mut self, i: [f32; 2]) -> () {
+        self.set_current(i)
+    }
+    fn set_to_current(&mut self, i: [f32; 2]) -> () {
+        self.set_current(i)
+    }
+}
+
+pub fn build_rl_branch(i_base: f32, w_nom: f32, rf: f32, lf: f32) -> RlBranch<f32> {
     RlBranch {
         // RL Filter Parameters
+        i_base,
         w_nom,
         rf,
         lf,
@@ -292,10 +337,10 @@ impl LclFilter<f32> {
     }
 }
 
-pub fn build_lcl_filter(w_nom: f32, v_nom: f32, rf: f32, lf: f32, rc: f32, cf: f32, rg: f32, lg: f32) -> LclFilter<f32> {
-    let from_rl_branch = build_rl_branch(w_nom, rf, lf);
+pub fn build_lcl_filter(w_nom: f32, i_base: f32, v_nom: f32, rf: f32, lf: f32, rc: f32, cf: f32, rg: f32, lg: f32) -> LclFilter<f32> {
+    let from_rl_branch = build_rl_branch(i_base, w_nom, rf, lf);
     let rc_branch = build_rc_branch(v_nom, rc, cf);
-    let to_rl_branch = build_rl_branch(w_nom, rg, lg);
+    let to_rl_branch = build_rl_branch(i_base, w_nom, rg, lg);
     LclFilter {
         // RL Filter Parameters
         from_rl_branch,
@@ -366,3 +411,66 @@ pub fn build_ac_volt_src(v_nom: f32, w_nom: f32) -> AcVoltSrc<f32> {
     }
 }
 
+
+/* 
+Define a LineToBus object 
+*/
+const LTB_INPUTS: usize = 2;
+type LtbStates<T, const X: usize> =  Vec<T, X>;
+pub struct LineToBus<'a, T: Num, const X: usize, const N: usize> {
+    // Components
+    pub line: &'a mut dyn Line<T, N>,  
+    pub bus: AcVoltSrc<T>, 
+
+    // Internal States
+    pub x: LtbStates<T, X>,  // TODO: Determine if there is a better way to handle the states of these components. Currently, they just sit idle as the LineToBus states are stepped. Possible to do, but would need to change Xstate trait or implement step seperately for this struct
+}
+
+impl<'a, const X: usize, const N: usize> Dynamics<f32, X, LTB_INPUTS> for LineToBus<'a, f32, X, N> {
+    // Calculates the p.u. current dynamics for the LineToBus using the given input, u.
+    // # Arguments    
+    // * 'x' - internal states as an vector of T values: (i_alpha, i_beta)
+    // * 'u' - input voltages as an array of T values: (v1_alpha, v1_beta)
+    fn dynamics(&self, x: &LtbStates<f32, X>, u: [f32; LTB_INPUTS]) -> LtbStates<f32, X> {    // TODO: Clean up this function to reduce the number of new vectors being created
+        let x_bus = x.fixed_slice::<2, 1>(0, 0);
+        let x_line = x.fixed_slice::<N, 1>(N-1, 0);
+        let u_line = [u[0], u[1], x_bus[(0)], x_bus[(1)]];
+        let dx_dt_bus = self.bus.dynamics(&x_bus.into(), []);
+        let dx_dt_line = self.line.dynamics(&x_line.into(), u_line);  // TODO: make the dynamics trait take a vector or slice for x, such that we can pass a slice of x here to the rl dynamics function (&x.fixed_rows::<2>(0)). Unsure how to make the S term of Matrix generic though (https://stackoverflow.com/questions/60885237/nalgebra-implementing-a-function-for-a-generic-matrixmn)
+
+        let mut dx_dt: Vec<f32, X> = na::zero();
+        let mut dx_dt_bus_slice = dx_dt.fixed_slice_mut::<2, 1>(0, 0); 
+        dx_dt_bus_slice.copy_from(&dx_dt_bus);
+        let mut dx_dt_line_slice = dx_dt.fixed_slice_mut::<N, 1>(N-1, 0);
+        dx_dt_line_slice.copy_from(&dx_dt_line);
+
+        return dx_dt
+    }
+}
+
+impl<'a, const X: usize, const N: usize> XState<f32, X, LTB_INPUTS> for LineToBus<'a, f32, X, N> {
+    fn get_x(&self) -> &Vec<f32, X> {
+        //let mut x: Vec<f32, X> = zero();
+        //let x_bus = self.bus.get_x();
+        //let x_line = self.line.get_x();
+        //let mut x_l = x.fixed_slice_mut::<2, 1>(0, 0); 
+        //x_l.copy_from(x_bus);
+        //let mut x_r = x.fixed_slice_mut::<N, 1>(N-1, 0);
+        //x_r.copy_from(x_line);
+        //self.x = x;  // TODO: Determine how to do with without storing the state in the LineToBus object here... The point of all these calls to elements is to avoid storing the state twice. If I change this back, make sure to make the &mut self param just &self again
+        return &self.x
+    }
+    fn set_x(&mut self, x: Vec<f32, X>) {
+        //let x_l = x.fixed_slice::<2, 1>(0, 0);
+        //let x_r = x.fixed_slice::<N, 1>(N-1, 0);
+        //self.line.set_x(x_r.into());
+        //self.bus.set_x(x_l.into());
+        self.x = x;
+    }
+    fn get_theta_idx(&self) -> &ThetaIdx {
+        return &self.bus.theta_idx
+    }
+    fn get_w_nom(&self) -> f32 {
+        return self.bus.w_nom
+    }
+}

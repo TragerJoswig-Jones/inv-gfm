@@ -7,18 +7,18 @@ use super::*;
 /* 
 Grid-Forming Controller Interface
 */
-/// The 'GFMController' trait is used to indicate a control object that can be used within a GFM object.
+/// The 'GfmController' trait is used to indicate a control object that can be used within a GFM object.
 /// -   This trait requires the control object to have already implemented functions to set and get the 
 ///     state and step the dynamics of the control object with and without input.
-/// -   Note this trait is seperate from the GFMInterface so that the GFMInterface can also be implemented 
-///     on the GFM struct.
-pub trait GFMController<T: Num, const X: usize>: RK2Step<f32, X, 2> + // TODO: Base/Require the GFMController to have implemented the NodeInterface trait
+/// -   Note this trait is seperate from the GfmInterface so that the GfmInterface can also be implemented 
+///     on the Gfm struct.
+pub trait GfmController<T: Num, const X: usize>: RK2Step<f32, X, 2> + // TODO: Base/Require the GfmController to have implemented the NodeInterface trait
                                                  NoInputStep<f32, X, 2> + 
                                                  XState<f32, X, 2> + 
-                                                 GFMInterface<f32, X> 
+                                                 GfmInterface<f32, X> 
 {}
 
-pub trait GFMInterface<T: Num, const X: usize> {
+pub trait GfmInterface<T: Num, const X: usize> {
     /// Returns the voltage magnitude (p.u.) and angle (rad) state values of the GFM controller
     fn get_voltage(&self) -> [T; 2];
     fn get_pu_voltage(&self) -> [T; 2];
@@ -30,14 +30,15 @@ pub trait GFMInterface<T: Num, const X: usize> {
     fn output(&self) -> [f32; 2];
 }
 
-pub struct GFM<'a, T: Num, const X: usize> {
-    pub ctrl: &'a mut dyn GFMController<T, X>,  // A reference to a grid forming control object
+/// Defines a 'Gfm' structure that adds presynchronization capabilities to a 'GfmController'
+pub struct Gfm<'a, T: Num, const X: usize> {
+    pub ctrl: &'a mut dyn GfmController<T, X>,  // A reference to a grid forming control object
     synced: bool,  // If false, then presynchronization dynamics will be used
     gamma: T,  // A scalar used for presynchronization dynamics
     pub sync_tol: T,  // The tolerance for the difference between the grid and GFM voltages to be considered synchronized during presynchronization
 }
 
-/// The 'Presync' trait allows a GFM controller to step its dynamics such that it can synchronize to the input voltage
+/// The 'Presync' trait allows a GFM controller to step its dynamics such that it can synchronize to an AC voltage
 pub trait Presync<T: Num, const X: usize> {
     /// Steps the GFM controller by timestep 'dt' using dynamics according to 'synced' given the inputs 
     /// 'u' (An array of alpha beta currents in p.u.: [i.alpha, i.beta]) and 'vg' (An array of alpha beta voltages in p.u.: [vg.alpha, vg.beta]).
@@ -53,7 +54,7 @@ pub trait Presync<T: Num, const X: usize> {
     fn check_sync(&self, vg: [T; 2]) -> bool;
 }
 
-impl<'a, const X: usize> Presync<f32, X> for GFM<'a, f32, X>{
+impl<'a, const X: usize> Presync<f32, X> for Gfm<'a, f32, X>{
     fn gfm_step(&mut self, dt: f32, u: [f32; 2], vg: [f32; 2]) -> Vec<f32, X> {
         if self.synced {
             return self.ctrl.step(dt, u);
@@ -100,10 +101,10 @@ impl<'a, const X: usize> Presync<f32, X> for GFM<'a, f32, X>{
     }
 }
 
-// Implement GFMInterface for GFM object such that users can make calls to functions directly from the GFM object
+// Implement GfmInterface for GFM object such that users can make calls to functions directly from the GFM object
 // TODO: With this should we make the ctrl parameter private???
-// TODO: Crate a seperate trait 'NodeInterface' with voltage calls and make it a requirement of GFMInterface (Implement NodeInterface on ACVoltSrc)
-impl<'a, const X: usize> GFMInterface<f32, X> for GFM<'a, f32, X> {
+// TODO: Crate a seperate trait 'NodeInterface' with voltage calls and make it a requirement of GfmInterface (Implement NodeInterface on ACVoltSrc)
+impl<'a, const X: usize> GfmInterface<f32, X> for Gfm<'a, f32, X> {
     fn get_voltage(&self) -> [f32; 2] {
         self.ctrl.get_voltage()
     }
@@ -124,8 +125,8 @@ impl<'a, const X: usize> GFMInterface<f32, X> for GFM<'a, f32, X> {
     }
 }
 
-pub fn build_gfm<'a, const X: usize>(ctrl: &'a mut dyn GFMController<f32, X>, gamma: f32) -> GFM<'a, f32, X> {
-    GFM { ctrl, synced: false, gamma, sync_tol: 1e-3 }
+pub fn build_gfm<'a, const X: usize>(ctrl: &'a mut dyn GfmController<f32, X>, gamma: f32) -> Gfm<'a, f32, X> {
+    Gfm { ctrl, synced: false, gamma, sync_tol: 1e-3 }
 }
 
 /* 
@@ -189,7 +190,7 @@ impl<T: Num> XState<T, DVOC_STATES, DVOC_INPUTS> for DvocController<T> {
 }
 
 // TODO: Determine if we want to make this implementation a macro as it will be the same for each GFM controller (Note that we cannot implement it on a generic type that includes all GFM controllers unless we want to access the internal parameters through functions which may be slower...)
-impl GFMInterface<f32, DVOC_STATES> for DvocController<f32> {  // TODO: Determine if this can remain based on generic num type T (Issue arises as dynamics of DvocController must be implemented on f32 to use scalars and constants)
+impl GfmInterface<f32, DVOC_STATES> for DvocController<f32> {  // TODO: Determine if this can remain based on generic num type T (Issue arises as dynamics of DvocController must be implemented on f32 to use scalars and constants)
     fn get_voltage(&self) -> [f32; 2] {
         return [self.x[(0)] * self.v_nom, self.x[(1)] * self.w_nom]
     }
@@ -217,7 +218,7 @@ impl GFMInterface<f32, DVOC_STATES> for DvocController<f32> {  // TODO: Determin
         self.get_voltage()
     }
 }
-impl GFMController<f32, DVOC_STATES> for DvocController<f32> {}
+impl GfmController<f32, DVOC_STATES> for DvocController<f32> {}
 
 pub fn build_dvoc_controller(v_nom: f32, w_nom: f32, xi: f32, c: f32) -> DvocController<f32> {
     DvocController {
@@ -312,14 +313,12 @@ impl<T: Num> XState<T, DROOP_STATES, DROOP_INPUTS> for DroopController<T> {  // 
 }
 
 // TODO: Determine if we want to make this implementation a macro as it will be the same for each GFM controller (Note that we cannot implement it on a generic type that includes all GFM controllers unless we want to access the internal parameters through functions which may be slower...)
-impl GFMInterface<f32, DROOP_STATES> for DroopController<f32> {  // TODO: Determine if this can remain based on generic num type T (Issue arises as dynamics of DroopController must be implemented on f32 to use scalars and constants)
+impl GfmInterface<f32, DROOP_STATES> for DroopController<f32> {  // TODO: Determine if this can remain based on generic num type T (Issue arises as dynamics of DroopController must be implemented on f32 to use scalars and constants)
     fn get_voltage(&self) -> [f32; 2] {
-        let v = self.v_nom * (1. - self.mq * (self.x[(2)] - self.q_ref));
-        return [v, self.x[(0)] * self.w_nom]
+        [self.compute_voltage(), self.x[(0)] * self.w_nom]
     }
     fn get_pu_voltage(&self) -> [f32; 2] {
-        let v = 1. - self.mq * (self.x[(2)] - self.q_ref);
-        return [v, self.x[(0)]] 
+        [self.compute_pu_voltage(), self.x[(0)]] 
     }
     fn set_voltage(&mut self, v: [f32; 2]) -> () {
         self.x[(0)] = v[1];  // Sets the voltage angle
@@ -339,12 +338,21 @@ impl GFMInterface<f32, DROOP_STATES> for DroopController<f32> {  // TODO: Determ
     }
     // Returns the reference voltage for the droop controller
     fn output(&self) -> [f32; 2] {
-        let v = self.v_nom * (1. - self.mq * (self.x[(3)] - self.q_ref));
-        let theta = self.x[(1)];
-        return [v, theta]
+        return [self.compute_voltage(), self.x[(0)]]  // [v, theta]
     }
 }
-impl GFMController<f32, DROOP_STATES> for DroopController<f32> {}
+impl GfmController<f32, DROOP_STATES> for DroopController<f32> {}
+
+impl DroopController<f32> {
+    /// Returns the p.u. voltage calculated from the Q,filt state
+    fn compute_pu_voltage(&self) -> f32 {
+        1. - self.mq * (self.x[(3)] - self.q_ref)
+    }
+    /// Returns the unit voltage calculated from the Q,filt state
+    fn compute_voltage(&self) -> f32 {
+        self.v_nom * self.compute_pu_voltage()
+    }
+}
 
 pub fn build_droop_controller(v_nom: f32, w_nom: f32, mp: f32, mq: f32, w_c: f32) -> DroopController<f32> {
     DroopController {
