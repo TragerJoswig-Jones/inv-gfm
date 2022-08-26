@@ -30,6 +30,8 @@ pub struct DvocController<T: Num> {
     c: T,  // oscillator capacitance (F)
     pub p_ref: T,  // Active power reference (p.u.)
     pub q_ref: T,  // Reactive power reference (p.u.)
+
+    n_phase: T, // # of phases for power calculation (e.g. Single-Phase, 1., or Three-Phase, 3.)
 }
 
 impl Dynamics<f32, DVOC_STATES, DVOC_INPUTS> for DvocController<f32> {
@@ -41,7 +43,7 @@ impl Dynamics<f32, DVOC_STATES, DVOC_INPUTS> for DvocController<f32> {
         let (v, theta) = (x[0], x[1] * self.w_nom);
         let v_dq = DQZ{ d: v * SQRT_2, q: 0., z: 0. };  // TODO: Determine the best way to handle multiplying by a constant
         let i_dq = AlphaBeta::from_ab_(u[0], u[1]).to_dqz(&SinCos::<f32>::from_theta(theta));
-        let (p, q) = calc_dq_power(&v_dq, &i_dq);
+        let (p, q) = calc_dq_power(&v_dq, &i_dq, self.n_phase);
 
         // Per unit dynamics (eq.26 from 'A Grid-compatible Virtual Oscillator Controller')
         let _sqrt2cv = 1. / (SQRT_2 * self.c * x[0]);
@@ -98,7 +100,7 @@ impl InvInterface<f32, DVOC_STATES> for DvocController<f32> {  // TODO: Determin
 }
 impl InvController<f32, DVOC_STATES> for DvocController<f32> {}
 
-pub fn build_dvoc_controller(v_nom: f32, w_nom: f32, xi: f32, c: f32) -> DvocController<f32> {
+pub fn build_dvoc_controller(v_nom: f32, w_nom: f32, xi: f32, c: f32, n_phase: f32) -> DvocController<f32> {
     DvocController {
         v_nom,
         x_nom: 1.,
@@ -112,6 +114,7 @@ pub fn build_dvoc_controller(v_nom: f32, w_nom: f32, xi: f32, c: f32) -> DvocCon
         c,
         p_ref: 0.,
         q_ref: 0.,
+        n_phase,
     }
 }
 
@@ -129,6 +132,7 @@ pub fn build_default_dvoc_controller(v_nom: f32, f_nom: f32) -> DvocController<f
         c: 0.2679,
         p_ref: 0.,
         q_ref: 0.,
+        n_phase: 3.,
     }
 }
 
@@ -152,6 +156,8 @@ pub struct DroopController<T: Num> {
     pub mq: T, // voltage droop slope (V)
     pub p_ref: T,  // Active power reference (p.u.)
     pub q_ref: T,  // Reactive power reference (p.u.)
+
+    n_phase: T, // # of phases for power calculation (e.g. Single-Phase, 1., or Three-Phase, 3.)
 }
 
 impl Dynamics<f32, DROOP_STATES, DROOP_INPUTS> for DroopController<f32> {
@@ -164,7 +170,7 @@ impl Dynamics<f32, DROOP_STATES, DROOP_INPUTS> for DroopController<f32> {
         let v = 1. - self.mq * (p_filt - self.p_ref);
         let v_dq = DQZ{ d: v * SQRT_2, q: 0., z: 0.};
         let i_dq = AlphaBeta::from_ab_(u[0], u[1]).to_dqz(&SinCos::<f32>::from_theta(theta));
-        let (p, q) = calc_dq_power(&v_dq, &i_dq);
+        let (p, q) = calc_dq_power(&v_dq, &i_dq, self.n_phase);
 
         // Per-unit dynamics (based on eq.13 & eq.17 from 'Control of Parallel Connected Inverters in Standalone ac Supply Systems' by Chandorkar M., Et al.)
         let dp_filt_dt = self.w_c * (p - p_filt);
@@ -232,7 +238,7 @@ impl DroopController<f32> {
     }
 }
 
-pub fn build_droop_controller(v_nom: f32, w_nom: f32, mp: f32, mq: f32, w_c: f32) -> DroopController<f32> {
+pub fn build_droop_controller(v_nom: f32, w_nom: f32, mp: f32, mq: f32, w_c: f32, n_phase: f32) -> DroopController<f32> {
     DroopController {
         v_nom,
         w_nom,
@@ -243,6 +249,7 @@ pub fn build_droop_controller(v_nom: f32, w_nom: f32, mp: f32, mq: f32, w_c: f32
         w_c,
         p_ref: 0.,
         q_ref: 0.,
+        n_phase,
     }
 }
 
@@ -257,11 +264,144 @@ pub fn build_default_droop_controller(v_nom: f32, f_nom: f32) -> DroopController
         w_c: 2.*PI*30.,
         p_ref: 0.,
         q_ref: 0.,
+        n_phase: 3.,
     }
 }
 
 /* 
-Define a double-loop voltage control object 
+Virtual Synchronous Machine (VSM) controller
+*/
+const VSM_STATES: usize = 3;
+const VSM_INPUTS: usize = 2;
+type VsmStates<T> =  Vec<T, VSM_STATES>;
+/* Define a droop controller */
+pub struct VsmController<T: Num> {
+    // Internal States
+    pub x: VsmStates<T>,  // [theta: angle state (p.u.), p_filt: low-pass filter active power (p.u.), q_filt: low-pass filter reactive power (p.u.)]
+    theta_idx: ThetaIdx,  // Theta index is 0
+    
+    // Other Parameters
+    pub v_nom: T, // nominal voltage (V)
+    pub w_nom: T, // nominal frequency (rad)
+    pub w_c: T, // power low-pass filter cutoff frequency (rad)
+    pub mp: T, // frequency droop slope (rad/s)
+    pub mq: T, // voltage droop slope (V)
+    pub p_ref: T,  // active power reference (p.u.)
+    pub q_ref: T,  // reactive power reference (p.u.)
+
+    n_phase: T, // # of phases for power calculation (e.g. Single-Phase, 1., or Three-Phase, 3.)
+}
+
+impl Dynamics<f32, VSM_STATES, VSM_INPUTS> for VsmController<f32> {
+    // Calculates the voltage dynamics of the droop controller using the given input, u.
+    // # Arguments
+    // * 'x' - polar voltage (p.u.) and filtered powers as a tuple of f32 values: (v, theta, p_filt, q_filt)
+    // * 'u' - alpha-beta current (A) as a tuple of f32 values: (ialpha, ibeta)
+    fn dynamics(&self, x: &VsmStates<f32>, u: [f32; VSM_INPUTS]) -> VsmStates<f32> {
+        let (theta, p_filt, q_filt) = (x[0] * self.w_nom, x[1], x[2]);
+        let v = 1. - self.mq * (p_filt - self.p_ref);
+        let v_dq = DQZ{ d: v * SQRT_2, q: 0., z: 0.};
+        let i_dq = AlphaBeta::from_ab_(u[0], u[1]).to_dqz(&SinCos::<f32>::from_theta(theta));
+        let (p, q) = calc_dq_power(&v_dq, &i_dq, self.n_phase);
+
+        // Per-unit dynamics (based on eq.13 & eq.17 from 'Control of Parallel Connected Inverters in Standalone ac Supply Systems' by Chandorkar M., Et al.)
+        let dp_filt_dt = self.w_c * (p - p_filt);
+        let dq_filt_dt = self.w_c * (q - q_filt);
+        let dtheta_dt = 1. - self.mp * (p_filt - self.p_ref);
+        return na::Vector3::new(dtheta_dt, dp_filt_dt, dq_filt_dt)
+    }
+}
+
+// Implement functions for getting and setting the states of the dVOC object
+impl<T: Num> XState<T, VSM_STATES, VSM_INPUTS> for VsmController<T> {  // TODO: Implement XState trait with a macro as it is the same for each object
+    fn get_x(&self) -> &Vec<T, VSM_STATES> {
+        return &self.x
+    }
+    fn set_x(&mut self, x: Vec<T, VSM_STATES>) {
+        self.x = x;
+    }
+    fn get_theta_idx(&self) -> &ThetaIdx {
+        return &self.theta_idx
+    }
+    fn get_w_nom(&self) -> T {
+        return self.w_nom
+    }
+}
+
+// TODO: Determine if we want to make this implementation a macro as it will be the same for each GFM controller (Note that we cannot implement it on a generic type that includes all GFM controllers unless we want to access the internal parameters through functions which may be slower...)
+impl InvInterface<f32, VSM_STATES> for VsmController<f32> {  // TODO: Determine if this can remain based on generic num type T (Issue arises as dynamics of VsmController must be implemented on f32 to use scalars and constants)
+    fn get_voltage(&self) -> [f32; 2] {
+        [self.compute_voltage(), self.x[(0)] * self.w_nom]
+    }
+    fn get_pu_voltage(&self) -> [f32; 2] {
+        [self.compute_pu_voltage(), self.x[(0)]] 
+    }
+    fn set_voltage(&mut self, v: [f32; 2]) -> () {
+        self.x[(0)] = v[1];  // Sets the voltage angle
+        // Note the voltage magnitude is not set as it is directly calculated from Q,filt
+    }
+    // Sets the active power reference within the droop controller
+    // # Arguments
+    // * 'p_ref' - The desired active power reference in p.u.
+    fn set_p_ref(&mut self, p_ref: f32) {
+        self.p_ref = p_ref;
+    }
+    // Sets the reactive power reference within the droop controller
+    // # Arguments
+    // * 'q_ref' - The desired reactive power reference in p.u.
+    fn set_q_ref(&mut self, q_ref: f32) {
+        self.q_ref = q_ref;
+    }
+    // Returns the reference voltage for the droop controller
+    fn output(&self) -> [f32; 2] {
+        return [self.compute_voltage(), self.x[(0)]]  // [v, theta]
+    }
+}
+impl InvController<f32, VSM_STATES> for VsmController<f32> {}
+
+impl VsmController<f32> {
+    /// Returns the p.u. voltage calculated from the Q,filt state
+    fn compute_pu_voltage(&self) -> f32 {
+        1. - self.mq * (self.x[(3)] - self.q_ref)
+    }
+    /// Returns the unit voltage calculated from the Q,filt state
+    fn compute_voltage(&self) -> f32 {
+        self.v_nom * self.compute_pu_voltage()
+    }
+}
+
+pub fn build_vsm_controller(v_nom: f32, w_nom: f32, mp: f32, mq: f32, w_c: f32, n_phase: f32) -> VsmController<f32> {
+    VsmController {
+        v_nom,
+        w_nom,
+        x: na::Vector3::new(0., 0., 0.),
+        theta_idx: ThetaIdx {has_theta: true, theta_idx: 0},
+        mp,
+        mq,
+        w_c,
+        p_ref: 0.,
+        q_ref: 0.,
+        n_phase,
+    }
+}
+
+pub fn build_default_vsm_controller(v_nom: f32, f_nom: f32) -> VsmController<f32> {
+    VsmController {
+        v_nom,
+        w_nom: 2. * PI * f_nom,
+        x: na::Vector3::new(0., 0., 0.),
+        theta_idx: ThetaIdx {has_theta: true, theta_idx: 0},
+        mp: 0.0026,
+        mq: 0.005,
+        w_c: 2.*PI*30.,
+        p_ref: 0.,
+        q_ref: 0.,
+        n_phase: 3.,
+    }
+}
+
+/* 
+Double-loop Voltage Controller (DVLC)
 */
 const DLVC_STATES: usize = 4;
 // [vd int, vq int, id int, iq int]

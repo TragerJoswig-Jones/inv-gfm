@@ -192,6 +192,8 @@ pub struct GflController<T: Num> {
     c: T,  // Oscillator capacitance (F)
     pub p_ref: T,  // Active power reference (p.u.)
     pub q_ref: T,  // Reactive power reference (p.u.)
+
+    n_phase: T, // # of phases for power calculation (e.g. Single-Phase, 1., or Three-Phase, 3.)
 }
 
 impl Dynamics<f32, GFL_STATES, GFL_INPUTS> for GflController<f32> {
@@ -203,7 +205,7 @@ impl Dynamics<f32, GFL_STATES, GFL_INPUTS> for GflController<f32> {
         let (v, theta) = (x[0], x[1] * self.w_nom);
         let v_dq = DQZ{ d: v * SQRT_2, q: 0., z: 0. };  // TODO: Determine the best way to handle multiplying by a constant
         let i_dq = AlphaBeta::from_ab_(u[0], u[1]).to_dqz(&SinCos::<f32>::from_theta(theta));
-        let (p, q) = calc_dq_power(&v_dq, &i_dq);
+        let (p, q) = calc_dq_power(&v_dq, &i_dq, self.n_phase);
 
         // Per unit dynamics (eq.26 from 'A Grid-compatible Virtual Oscillator Controller')
         let _sqrt2cv = 1. / (SQRT_2 * self.c * x[0]);
@@ -260,7 +262,7 @@ impl InvInterface<f32, GFL_STATES> for GflController<f32> {  // TODO: Determine 
 }
 impl InvController<f32, GFL_STATES> for GflController<f32> {}
 
-pub fn build_dvoc_controller(v_nom: f32, w_nom: f32, xi: f32, c: f32) -> GflController<f32> {
+pub fn build_gfl_controller(v_nom: f32, w_nom: f32, xi: f32, c: f32, n_phase: f32) -> GflController<f32> {
     GflController {
         v_nom,
         x_nom: 1.,
@@ -274,5 +276,6 @@ pub fn build_dvoc_controller(v_nom: f32, w_nom: f32, xi: f32, c: f32) -> GflCont
         c,
         p_ref: 0.,
         q_ref: 0.,
+        n_phase,
     }
 }
