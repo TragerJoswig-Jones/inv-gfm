@@ -1,4 +1,3 @@
-use na::zero;
 
 /* Dynamical objects for simulating power systems */
 use crate::constants::*;
@@ -83,6 +82,7 @@ pub trait NodeInterface<T: Num, const X: usize>: RK2Step<f32, X, 2> +
 /* 
 Current Edge Interface
 */
+const LINE_INPUTS: usize = 4;
 /// The 'Line' trait is used to indicate an object that has a current state with dynamics.
 pub trait Line<T: Num, const X: usize>: RK2Step<f32, X, 4> + 
                                         NoInputStep<f32, X, 4> + 
@@ -96,6 +96,10 @@ pub trait Line<T: Num, const X: usize>: RK2Step<f32, X, 4> +
     fn get_to_pu_current(&self) -> [T; 2];
     fn set_fr_current(&mut self, i: [T; 2]) -> ();
     fn set_to_current(&mut self, i: [T; 2]) -> ();
+    // Opens and closes line switch
+    fn open_switch(&mut self);
+    fn close_switch(&mut self);
+    fn switch_is_closed(&self) -> bool;
 }
 
 /* 
@@ -110,6 +114,8 @@ pub struct RlBranch<T: Num> {
     pub w_nom: T, // nominal frequency (rad)
     rf: T,  // Line resistance (p.u.)
     lf: T,  // Line inductance (p.u.)
+
+    switch_closed: bool, // to-side switch state
 
     // Internal States
     pub i_alpha: T,  // alpha current state (p.u.)
@@ -141,11 +147,15 @@ impl Dynamics<f32, RL_STATES, RL_INPUTS> for RlBranch<f32> {
     // * 'u' - input voltages as an array of T values: (v1, theta1, v2, theta2)
     fn dynamics(&self, x: &RlStates<f32>, u: [f32; RL_INPUTS]) -> RlStates<f32> {
         let (v1_alpha, v1_beta, v2_alpha, v2_beta) = (u[0], u[1], u[2], u[3]);
-        let v1_ab = AlphaBeta::from_ab_(v1_alpha, v1_beta);
+        let mut v1_ab = AlphaBeta::from_ab_(v1_alpha, v1_beta);
+        if !self.switch_closed {
+            v1_ab.alpha = v2_alpha;
+            v1_ab.beta = v2_beta;
+        }
         let v2_ab = AlphaBeta::from_ab_(v2_alpha, v2_beta);
         let i_ab = AlphaBeta::from_ab_(x[0], x[1]);
         
-        // Unitc line dynamics
+        // calculate dynamics
         let di_alpha_dt = (v1_ab.alpha - v2_ab.alpha - self.rf * i_ab.alpha) / self.lf;
         let di_beta_dt  = (v1_ab.beta  - v2_ab.beta  - self.rf * i_ab.beta) / self.lf;
 
@@ -189,6 +199,15 @@ impl Line<f32, RL_STATES> for RlBranch<f32> {
     fn set_to_current(&mut self, i: [f32; 2]) -> () {
         self.set_current(i)
     }
+    fn open_switch(&mut self) {
+        self.switch_closed = false;
+    }
+    fn close_switch(&mut self) {
+        self.switch_closed = true;
+    }
+    fn switch_is_closed(&self) -> bool {
+        self.switch_closed
+    }
 }
 
 pub fn build_rl_branch(i_base: f32, w_nom: f32, rf: f32, lf: f32) -> RlBranch<f32> {
@@ -198,6 +217,8 @@ pub fn build_rl_branch(i_base: f32, w_nom: f32, rf: f32, lf: f32) -> RlBranch<f3
         w_nom,
         rf,
         lf,
+
+        switch_closed: false,
 
         // Internal States
         i_alpha: 0.,
@@ -274,10 +295,16 @@ const LCL_STATES: usize = 6;
 const LCL_INPUTS: usize = 4;
 type LclStates<T> =  Vec<T, LCL_STATES>;
 pub struct LclFilter<T: Num> {
+    // Parameters
+    v_nom: f32,
+    i_base: f32,
+    
     // LCL Filter Components
     pub from_rl_branch: RlBranch<T>,  // TODO: Determine if there is a better way to handle the states of these components. Currently, they just sit idle as the LclFitler states are stepped.
     pub rc_branch: RcBranch<T>, 
     pub to_rl_branch: RlBranch<T>,
+
+    switch_closed: bool, // to-side switch state
 
     // Internal States
     pub x: LclStates<T>,
@@ -299,7 +326,11 @@ impl Dynamics<f32, LCL_STATES, LCL_INPUTS> for LclFilter<f32> {
         let v_node_beta = x[(3)] + i_cap_beta * self.rc_branch.rc;
         let u1 = [u[0], u[1], v_node_alpha, v_node_beta];
         let u2 = [i_cap_alpha, i_cap_beta];
-        let u3 = [v_node_alpha, v_node_beta, u[2], u[3]];
+        let mut u3 = [v_node_alpha, v_node_beta, u[2], u[3]];
+        if !self.switch_closed {
+            u3[2] = v_node_alpha;
+            u3[3] = v_node_beta;
+        }
         let from_di_dt = self.from_rl_branch.dynamics(&x1, u1);  // TODO: make the dynamics trait take a vector or slice for x, such that we can pass a slice of x here to the rl dynamics function (&x.fixed_rows::<2>(0)). Unsure how to make the S term of Matrix generic though (https://stackoverflow.com/questions/60885237/nalgebra-implementing-a-function-for-a-generic-matrixmn)
         let dv_dt = self.rc_branch.dynamics(&x2, u2);
         let to_di_dt = self.to_rl_branch.dynamics(&x3, u3);
@@ -324,8 +355,41 @@ impl<T: Num> XState<T, LCL_STATES, LCL_INPUTS> for LclFilter<T> {
     }
 }
 
+// Implement Line trait for LclFilter
+impl Line<f32, LCL_STATES> for LclFilter<f32> {
+    fn get_fr_current(&self) -> [f32; 2] {
+        [self.x[(0)] * self.i_base, self.x[(1)] * self.i_base]
+    }
+    fn get_fr_pu_current(&self) -> [f32; 2] {
+        [self.x[(0)], self.x[(1)]]
+    }
+    fn get_to_current(&self) -> [f32; 2] {
+        [self.x[(4)] * self.i_base, self.x[(5)] * self.i_base]
+    }
+    fn get_to_pu_current(&self) -> [f32; 2] {
+        [self.x[(4)], self.x[(5)]]
+    }
+    fn set_fr_current(&mut self, i: [f32; 2]) -> () {
+        self.x[(0)] = i[0];
+        self.x[(1)] = i[1];
+    }
+    fn set_to_current(&mut self, i: [f32; 2]) -> () {
+        self.x[(4)] = i[0];
+        self.x[(5)] = i[1];
+    }
+    fn open_switch(&mut self) {
+        self.switch_closed = false;
+    }
+    fn close_switch(&mut self) {
+        self.switch_closed = true;
+    }
+    fn switch_is_closed(&self) -> bool {
+        self.switch_closed
+    }
+}
+
 impl LclFilter<f32> {
-    pub fn get_from_current(&self) -> [f32; 2] {  // TODO: Determine if this should be a slice of a vector or a new vector or remain an array
+    pub fn get_fr_current(&self) -> [f32; 2] {  // TODO: Determine if this should be a slice of a vector or a new vector or remain an array
         return [self.x[(0)], self.x[(1)]]  // TODO: Determine if this should return the LCL filter states or make calls to the LCL filter components to get their states
     }
     pub fn get_to_current(&self) -> [f32; 2] {
@@ -342,10 +406,16 @@ pub fn build_lcl_filter(w_nom: f32, i_base: f32, v_nom: f32, rf: f32, lf: f32, r
     let rc_branch = build_rc_branch(v_nom, rc, cf);
     let to_rl_branch = build_rl_branch(i_base, w_nom, rg, lg);
     LclFilter {
-        // RL Filter Parameters
+        // Parameters
+        i_base,
+        v_nom,
+
+        // Components
         from_rl_branch,
         rc_branch, 
         to_rl_branch,
+
+        switch_closed: false,
 
         // Internal States
         x: na::Vector6::new(0., 0., SQRT_2, 0., 0., 0.),
@@ -419,31 +489,43 @@ const LTB_INPUTS: usize = 2;
 type LtbStates<T, const X: usize> =  Vec<T, X>;
 pub struct LineToBus<'a, T: Num, const X: usize, const N: usize> {
     // Components
-    pub line: &'a mut dyn Line<T, N>,  
+    pub line: &'a mut dyn Line<T, N>,  // TODO: Should the LineToBus directly own these components? Could make access to internal states and functions easier... Look at using Boxed for size error https://docs.rust-embedded.org/book/collections/, https://stackoverflow.com/questions/25818082/vector-of-objects-belonging-to-a-trait
     pub bus: AcVoltSrc<T>, 
 
     // Internal States
     pub x: LtbStates<T, X>,  // TODO: Determine if there is a better way to handle the states of these components. Currently, they just sit idle as the LineToBus states are stepped. Possible to do, but would need to change Xstate trait or implement step seperately for this struct
 }
 
-impl<'a, const X: usize, const N: usize> Dynamics<f32, X, LTB_INPUTS> for LineToBus<'a, f32, X, N> {
+impl<'a, T: Num, const X: usize, const N: usize> LineToBus<'a, T, X, N> {
+    pub fn open_switch(&mut self) {
+        self.line.open_switch();
+    }
+    pub fn close_switch(&mut self) {
+        self.line.close_switch();
+    }
+    pub fn switch_is_closed(&self) -> bool {
+        self.line.switch_is_closed()
+    }
+}
+
+impl<'a, const X: usize, const L: usize> Dynamics<f32, X, LTB_INPUTS> for LineToBus<'a, f32, X, L> {
     // Calculates the p.u. current dynamics for the LineToBus using the given input, u.
     // # Arguments    
     // * 'x' - internal states as an vector of T values: (i_alpha, i_beta)
     // * 'u' - input voltages as an array of T values: (v1_alpha, v1_beta)
     fn dynamics(&self, x: &LtbStates<f32, X>, u: [f32; LTB_INPUTS]) -> LtbStates<f32, X> {    // TODO: Clean up this function to reduce the number of new vectors being created
         let x_bus = x.fixed_slice::<2, 1>(0, 0);
-        let x_line = x.fixed_slice::<N, 1>(N-1, 0);
-        let u_line = [u[0], u[1], x_bus[(0)], x_bus[(1)]];
+        let x_line = x.fixed_slice::<L, 1>(X-L, 0);
+        let x_bus_alpha_beta = AlphaBeta::from_polar(x_bus[(0)], x_bus[(1)] * self.bus.w_nom);
+        let u_line = [u[0], u[1], x_bus_alpha_beta.alpha, x_bus_alpha_beta.beta];
         let dx_dt_bus = self.bus.dynamics(&x_bus.into(), []);
         let dx_dt_line = self.line.dynamics(&x_line.into(), u_line);  // TODO: make the dynamics trait take a vector or slice for x, such that we can pass a slice of x here to the rl dynamics function (&x.fixed_rows::<2>(0)). Unsure how to make the S term of Matrix generic though (https://stackoverflow.com/questions/60885237/nalgebra-implementing-a-function-for-a-generic-matrixmn)
 
         let mut dx_dt: Vec<f32, X> = na::zero();
         let mut dx_dt_bus_slice = dx_dt.fixed_slice_mut::<2, 1>(0, 0); 
         dx_dt_bus_slice.copy_from(&dx_dt_bus);
-        let mut dx_dt_line_slice = dx_dt.fixed_slice_mut::<N, 1>(N-1, 0);
+        let mut dx_dt_line_slice = dx_dt.fixed_slice_mut::<L, 1>(X-L, 0);
         dx_dt_line_slice.copy_from(&dx_dt_line);
-
         return dx_dt
     }
 }
@@ -472,5 +554,24 @@ impl<'a, const X: usize, const N: usize> XState<f32, X, LTB_INPUTS> for LineToBu
     }
     fn get_w_nom(&self) -> f32 {
         return self.bus.w_nom
+    }
+}
+
+pub fn build_line_to_bus<'a, const X: usize, const N: usize>(line: &'a mut dyn Line<f32, N>, bus: AcVoltSrc<f32>) -> LineToBus<'a, f32, X, N> {
+    // Initialize x to the states of the line and bus
+    let mut x: Vec<f32, X> = na::zero();
+    let x_bus = bus.get_x();
+    let x_line = line.get_x();
+    let mut x_l = x.fixed_slice_mut::<2, 1>(0, 0); 
+    x_l.copy_from(x_bus);
+    let mut x_r = x.fixed_slice_mut::<N, 1>(N-1, 0);
+    x_r.copy_from(x_line);
+
+    // Construct and return the LineToBus struct 
+    LineToBus { 
+        line, 
+        bus, 
+        
+        x,
     }
 }
