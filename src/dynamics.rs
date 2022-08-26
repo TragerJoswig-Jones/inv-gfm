@@ -18,6 +18,41 @@ pub trait XState<T: Num, const X: usize, const U: usize>{
     fn get_w_nom(&self) -> T;
 }
 
+pub trait HasStepFunc<T: Num, const X: usize, const U: usize> {
+    fn get_step_func(&self) -> fn(&mut dyn StepDynamics<T, X, U>, T, [T; U])-> Vec<T, X>;
+}
+
+// impl<D, const X: usize, const U: usize> HasStepFunc<f32, X, U> for D where D: XState<f32, X, U> + Dynamics<f32, X, U>  {
+//     fn get_step_func(&self) -> fn(&mut dyn StepDynamics<f32, X, U>, f32, [f32; U])-> Vec<f32, X> {
+//         return rk2_step;
+//     }
+// }
+
+pub trait StepDynamics<T: Num, const X: usize, const U: usize>: XState<T, X, U> + Dynamics<T, X, U> + HasStepFunc<T, X, U> {
+    fn step(&mut self, dt: T, u: [T; U]) -> Vec<T, X>;
+}
+
+impl<D, const X: usize, const U: usize> StepDynamics<f32, X, U> for D where D: XState<f32, X, U> + Dynamics<f32, X, U> + HasStepFunc<f32, X, U>  {
+    // Steps the dynamics
+    // # Arguments
+    // * 'u' - inputs (p.u.) as an array of T values: [input1, input2, ...]
+    // # Returns the dynamics, 'dx_dt' used to step the states
+    fn step(&mut self, dt: f32, u: [f32; U]) -> Vec<f32, X> {
+        let dx_dt = (self.get_step_func())(self, dt, u);
+        return dx_dt  // TODO: Determine if this should be returned. So far this is only used for the double-loop voltage controller as it requires the dtheta_dt value from a gfm controller
+    }
+}
+
+pub fn rk2_step<const X: usize, const U: usize>(component: &mut dyn StepDynamics<f32, X, U>, dt: f32, u: [f32; U]) -> Vec<f32, X> {
+    let x = component.get_x();
+    let dx_dt1 = component.dynamics(x, u);  //TODO: Replace dx_dt with reference to vector within the object?
+    let dx_dt2 = component.dynamics(&(x + dx_dt1 * dt), u);  
+    let dx_dt = (dx_dt1 + dx_dt2) * 0.5; // TODO: Use a smaller fractional fixed-point number for dx_dt values?
+    let x1 = x + dx_dt * dt;  //TODO: Test if &mut x would allow for direct modification of elements of the state vector allowing us to avoid creating x1 here
+    component.set_x(x1);
+    return dx_dt
+}
+
 pub trait RK2Step<T: Num, const X: usize, const U: usize>{
     fn step(&mut self, dt: T, u: [T; U]) -> Vec<f32, X>;
 }

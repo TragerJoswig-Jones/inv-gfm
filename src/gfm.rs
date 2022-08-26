@@ -14,7 +14,7 @@ const DVOC_STATES: usize = 2;
 const DVOC_INPUTS: usize = 2;
 type DvocStates<T> =  Vec<T, DVOC_STATES>;
 /* Define a dVOC controller */
-pub struct DvocController<T: Num> {
+pub struct DvocController<T: Num, const X: usize, const U: usize> {
     // Internal States
     pub v: T,  // voltage state (p.u.)
     pub theta: T, // angle state (p.u.)
@@ -32,6 +32,13 @@ pub struct DvocController<T: Num> {
     pub q_ref: T,  // Reactive power reference (p.u.)
 
     n_phase: T, // # of phases for power calculation (e.g. Single-Phase, 1., or Three-Phase, 3.)
+    step_method: fn(&mut dyn StepDynamics<T, X, U>, T, [T; U])-> Vec<T, X>,
+}
+
+impl<T: Num, const X: usize, const U: usize> HasStepFunc<T, X, U> for DvocController<T, X, U> {
+    fn get_step_func(&self) -> fn(&mut dyn StepDynamics<T, X, U>, T, [T; U])-> Vec<T, X> {
+        return self.step_method;
+    }
 }
 
 impl Dynamics<f32, DVOC_STATES, DVOC_INPUTS> for DvocController<f32> {
