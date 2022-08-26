@@ -266,6 +266,7 @@ pub trait Trig<T: Num> {
     fn from_theta(theta: T) -> SinCos<T>;
     fn rotate_right_120(&self) -> SinCos<T>;
     fn rotate_left_120(&self) -> SinCos<T>;
+    fn flip_theta(&self) -> SinCos<T>; 
 }
 
 impl Trig<f32> for SinCos<f32> {
@@ -279,7 +280,7 @@ impl Trig<f32> for SinCos<f32> {
         return SinCos{ sin_val: -ONE_HALF * self.sin_val + SQRT_3_OVER_2 * self.cos_val, 
                         cos_val: -ONE_HALF * self.cos_val - SQRT_3_OVER_2 * self.sin_val,
                         theta: self.theta + TWO_PI_OVER_THREE,
-            }
+                     }
     }
 
     // Rotate the reference angle, theta, by 120 degrees clockwise
@@ -287,7 +288,15 @@ impl Trig<f32> for SinCos<f32> {
         return SinCos{ sin_val: -ONE_HALF * self.sin_val - SQRT_3_OVER_2 * self.cos_val, 
                         cos_val: -ONE_HALF * self.cos_val + SQRT_3_OVER_2 * self.sin_val,
                         theta: self.theta - TWO_PI_OVER_THREE,
-                    }
+                     }
+    }
+
+    // Flip the sign of the reference angle, theta
+    fn flip_theta(&self) -> SinCos<f32> {
+        return SinCos{ sin_val: -self.sin_val,
+                       cos_val: self.cos_val,
+                       theta: -self.theta,        
+                     }
     }
 }
 

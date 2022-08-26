@@ -1,5 +1,5 @@
 // Functions for standard calculations
-use super::refs::*;
+use super::reference_frames::*;
 
 /* FLOATING-POINT IMPLEMENTATIONS */
 /// Calculates power from the given alpha-beta voltage, v, and alpha-beta current, i

@@ -7,11 +7,14 @@ use core::ops::{Add, Sub, Mul, Div, Rem};
 
 
 /* unifi-gfm crate modules */
-pub mod calc;
+pub mod calculations;
 pub mod constants;
+mod dynamics;
 pub mod gfm;
-pub mod refs;
-pub mod sims;
+pub mod gfl;
+pub mod inverter;
+pub mod reference_frames;
+pub mod simulations;
 #[cfg(test)]
 mod tests;
 
