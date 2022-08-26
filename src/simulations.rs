@@ -25,7 +25,7 @@ Current Edge Interface
 */
 const LINE_INPUTS: usize = 4;
 /// The 'Line' trait is used to indicate an object that has a current state with dynamics.
-pub trait Line<T: Num, const X: usize>: RK2Step<f32, X, 4> + 
+pub trait Line<T: Num, const X: usize>: StepDynamics<f32, X, 4> + 
                                         NoInputStep<f32, X, 4> + 
                                         XState<f32, X, 4> +
                                         Dynamics<f32, X, 4>
@@ -62,7 +62,8 @@ pub struct RlBranch<T: Num> {
     pub i_alpha: T,  // alpha current state (p.u.)
     pub i_beta: T, // beta current state (p.u.)
     pub x: RlStates<T>,
-    theta_idx: ThetaIdx, // -1 for RlBranch
+
+    step_method: fn(&mut dyn StepDynamics<T, RL_STATES, RL_INPUTS>, T, [T; RL_INPUTS])-> Vec<T, RL_STATES>,
 }
 impl<T: Num> RlBranch<T> {
     pub fn get_current(&self) -> [T; 2] {
@@ -104,6 +105,17 @@ impl Dynamics<f32, RL_STATES, RL_INPUTS> for RlBranch<f32> {
     }
 }
 
+impl StepDynamics<f32, RL_STATES, RL_INPUTS> for RlBranch<f32> {
+    // Steps the dynamics
+    // # Arguments
+    // * 'u' - inputs (p.u.) as an array of T values: [input1, input2, ...]
+    // # Returns the dynamics, 'dx_dt' used to step the states
+    fn step(&mut self, dt: f32, u: [f32; RL_INPUTS]) -> Vec<f32, RL_STATES> {
+        let dx_dt = (self.step_method)(self, dt, u);
+        return dx_dt 
+    }
+}
+
 // Implement functions for getting and setting the states of the RlBranch object
 impl<T: Num> XState<T, RL_STATES, RL_INPUTS> for RlBranch<T> {
     fn get_x(&self) -> &Vec<T, RL_STATES> {
@@ -111,12 +123,6 @@ impl<T: Num> XState<T, RL_STATES, RL_INPUTS> for RlBranch<T> {
     }
     fn set_x(&mut self, x: Vec<T, RL_STATES>) {
         self.x = x;
-    }
-    fn get_theta_idx(&self) -> &ThetaIdx {
-        return &self.theta_idx
-    }
-    fn get_w_nom(&self) -> T {
-        return self.w_nom
     }
 }
 
@@ -165,7 +171,7 @@ pub fn build_rl_branch(i_base: f32, w_nom: f32, rf: f32, lf: f32) -> RlBranch<f3
         i_alpha: 0.,
         i_beta: 0.,
         x: na::Vector2::new(0., 0.),
-        theta_idx: ThetaIdx {has_theta: false, theta_idx: 1},
+        step_method: rk2_step,
     }
 }
 
@@ -183,7 +189,7 @@ pub struct RcBranch<T: Num> {
     
     // Internal States
     pub x: RcStates<T>,  // [v_alpha, alpha voltage state (p.u.); v_beta, beta voltage state (p.u.)]
-    theta_idx: ThetaIdx, // No angular terms for RcBranch, but required for generic RK2Step definition
+    step_method: fn(&mut dyn StepDynamics<T, RC_STATES, RC_INPUTS>, T, [T; RC_INPUTS])-> Vec<T, RC_STATES>,
 }
 
 impl Dynamics<f32, RC_STATES, RC_INPUTS> for RcBranch<f32> {
@@ -200,6 +206,17 @@ impl Dynamics<f32, RC_STATES, RC_INPUTS> for RcBranch<f32> {
     }
 }
 
+impl StepDynamics<f32, RC_STATES, RC_INPUTS> for RcBranch<f32> {
+    // Steps the dynamics
+    // # Arguments
+    // * 'u' - inputs (p.u.) as an array of T values: [input1, input2, ...]
+    // # Returns the dynamics, 'dx_dt' used to step the states
+    fn step(&mut self, dt: f32, u: [f32; RC_INPUTS]) -> Vec<f32, RC_STATES> {
+        let dx_dt = (self.step_method)(self, dt, u);
+        return dx_dt 
+    }
+}
+
 // Implement functions for getting and setting the states of the RcBranch object
 impl<T: Num> XState<T, RC_STATES, RC_INPUTS> for RcBranch<T> {
     fn get_x(&self) -> &Vec<T, RC_STATES> {
@@ -207,12 +224,6 @@ impl<T: Num> XState<T, RC_STATES, RC_INPUTS> for RcBranch<T> {
     }
     fn set_x(&mut self, x: Vec<T, RC_STATES>) {
         self.x = x;
-    }
-    fn get_theta_idx(&self) -> &ThetaIdx {
-        return &self.theta_idx
-    }
-    fn get_w_nom(&self) -> T {
-        return self.v_nom  // TODO: Replace this function somehow?
     }
 }
 
@@ -225,7 +236,8 @@ pub fn build_rc_branch(v_nom: f32, rc: f32, cf: f32) -> RcBranch<f32> {
 
         // Internal States
         x: na::Vector2::new(SQRT_2, 0.),
-        theta_idx: ThetaIdx {has_theta: false, theta_idx: 1},
+
+        step_method: rk2_step,
     }
 }
 
@@ -249,7 +261,7 @@ pub struct LclFilter<T: Num> {
 
     // Internal States
     pub x: LclStates<T>,
-    theta_idx: ThetaIdx, // -1 for LCLFilter
+    step_method: fn(&mut dyn StepDynamics<T, LCL_STATES, LCL_INPUTS>, T, [T; LCL_INPUTS])-> Vec<T, LCL_STATES>,
 }
 
 impl Dynamics<f32, LCL_STATES, LCL_INPUTS> for LclFilter<f32> {
@@ -280,6 +292,17 @@ impl Dynamics<f32, LCL_STATES, LCL_INPUTS> for LclFilter<f32> {
     }
 }
 
+impl StepDynamics<f32, LCL_STATES, LCL_INPUTS> for LclFilter<f32> {
+    // Steps the dynamics
+    // # Arguments
+    // * 'u' - inputs (p.u.) as an array of T values: [input1, input2, ...]
+    // # Returns the dynamics, 'dx_dt' used to step the states
+    fn step(&mut self, dt: f32, u: [f32; LCL_INPUTS]) -> Vec<f32, LCL_STATES> {
+        let dx_dt = (self.step_method)(self, dt, u);
+        return dx_dt 
+    }
+}
+
 // Implement functions for getting and setting the states of the LCLFilter object
 impl<T: Num> XState<T, LCL_STATES, LCL_INPUTS> for LclFilter<T> {
     fn get_x(&self) -> &Vec<T, LCL_STATES> {
@@ -287,12 +310,6 @@ impl<T: Num> XState<T, LCL_STATES, LCL_INPUTS> for LclFilter<T> {
     }
     fn set_x(&mut self, x: Vec<T, LCL_STATES>) {
         self.x = x;
-    }
-    fn get_theta_idx(&self) -> &ThetaIdx {
-        return &self.theta_idx
-    }
-    fn get_w_nom(&self) -> T {
-        return self.from_rl_branch.w_nom  // TODO: Get rid of this function from the XState trait?
     }
 }
 
@@ -360,7 +377,7 @@ pub fn build_lcl_filter(w_nom: f32, i_base: f32, v_nom: f32, rf: f32, lf: f32, r
 
         // Internal States
         x: na::Vector6::new(0., 0., SQRT_2, 0., 0., 0.),
-        theta_idx: ThetaIdx {has_theta: false, theta_idx: 0},
+        step_method: rk2_step,
     }
 }
 
@@ -376,10 +393,9 @@ pub struct AcVoltSrc<T: Num> {
     pub w_nom: T, // nominal frequency (rad)
     
     // Internal States
-    pub v: T,  // alpha current state (p.u.)
-    pub theta: T, // beta current state (p.u.)
-    pub x: AcvsStates<T>,
-    theta_idx: ThetaIdx,
+    pub x: AcvsStates<T>,  // [alpha current state (p.u.), beta current state (p.u.)]
+    theta_idx: StateLimits<T, 1>,
+    step_method: fn(&mut dyn StepDynamics<T, ACVS_STATES, ACVS_INPUTS>, T, [T; ACVS_INPUTS])-> Vec<T, ACVS_STATES>,
 }
 
 impl Dynamics<f32, ACVS_STATES, ACVS_INPUTS> for AcVoltSrc<f32> {
@@ -392,6 +408,18 @@ impl Dynamics<f32, ACVS_STATES, ACVS_INPUTS> for AcVoltSrc<f32> {
     }
 }
 
+impl StepDynamics<f32, ACVS_STATES, ACVS_INPUTS> for AcVoltSrc<f32> {
+    // Steps the dynamics
+    // # Arguments
+    // * 'u' - inputs (p.u.) as an array of T values: [input1, input2, ...]
+    // # Returns the dynamics, 'dx_dt' used to step the states
+    fn step(&mut self, dt: f32, u: [f32; ACVS_INPUTS]) -> Vec<f32, ACVS_STATES> {
+        let dx_dt = (self.step_method)(self, dt, u);
+        wrap_angle(&mut self.x, &self.theta_idx);
+        return dx_dt 
+    }
+}
+
 // Implement functions for getting and setting the states of an AcVoltSrc object
 impl<T: Num> XState<T, ACVS_STATES, ACVS_INPUTS> for AcVoltSrc<T> {
     fn get_x(&self) -> &Vec<T, ACVS_STATES> {
@@ -399,12 +427,6 @@ impl<T: Num> XState<T, ACVS_STATES, ACVS_INPUTS> for AcVoltSrc<T> {
     }
     fn set_x(&mut self, x: Vec<T, ACVS_STATES>) {
         self.x = x;
-    }
-    fn get_theta_idx(&self) -> &ThetaIdx {
-        return &self.theta_idx
-    }
-    fn get_w_nom(&self) -> T {
-        return self.w_nom
     }
 }
 
@@ -415,10 +437,9 @@ pub fn build_ac_volt_src(v_nom: f32, w_nom: f32) -> AcVoltSrc<f32> {
         w_nom,
         
         // Internal States
-        v: 1.,
-        theta: 0.,
         x: na::Vector2::new(1., 0.),
-        theta_idx: ThetaIdx {has_theta: true, theta_idx: 1},
+        theta_idx: StateLimits::new_theta_wrap([1], w_nom),
+        step_method: rk2_step,
     }
 }
 
@@ -434,7 +455,9 @@ pub struct LineToBus<'a, T: Num, const X: usize, const N: usize> {
     pub bus: AcVoltSrc<T>, 
 
     // Internal States
-    pub x: LtbStates<T, X>,  // TODO: Determine if there is a better way to handle the states of these components. Currently, they just sit idle as the LineToBus states are stepped. Possible to do, but would need to change Xstate trait or implement step seperately for this struct
+    pub x: LtbStates<T, X>, // [bus states, line states]  // TODO: Determine if there is a better way to handle the states of these components. Currently, they just sit idle as the LineToBus states are stepped. Possible to do, but would need to change Xstate trait or implement step seperately for this struct
+    step_method: fn(&mut dyn StepDynamics<T, X, LTB_INPUTS>, T, [T; LTB_INPUTS])-> Vec<T, X>,
+    theta_idx: StateLimits<T, 1>, // Theta, [1], wraps within -pi to pi
 }
 
 impl<'a, T: Num, const X: usize, const N: usize> LineToBus<'a, T, X, N> {
@@ -471,6 +494,18 @@ impl<'a, const X: usize, const L: usize> Dynamics<f32, X, LTB_INPUTS> for LineTo
     }
 }
 
+impl<'a, const X: usize, const N: usize> StepDynamics<f32, X, LTB_INPUTS> for LineToBus<'a, f32, X, N> {
+    // Steps the dynamics
+    // # Arguments
+    // * 'u' - inputs (p.u.) as an array of T values: [input1, input2, ...]
+    // # Returns the dynamics, 'dx_dt' used to step the states
+    fn step(&mut self, dt: f32, u: [f32; LTB_INPUTS]) -> Vec<f32, X> {
+        let dx_dt = (self.step_method)(self, dt, u);
+        wrap_angle(&mut self.x, &self.theta_idx);
+        return dx_dt 
+    }
+}
+
 impl<'a, const X: usize, const N: usize> XState<f32, X, LTB_INPUTS> for LineToBus<'a, f32, X, N> {
     fn get_x(&self) -> &Vec<f32, X> {
         //let mut x: Vec<f32, X> = zero();
@@ -490,17 +525,12 @@ impl<'a, const X: usize, const N: usize> XState<f32, X, LTB_INPUTS> for LineToBu
         //self.bus.set_x(x_l.into());
         self.x = x;
     }
-    fn get_theta_idx(&self) -> &ThetaIdx {
-        return &self.bus.theta_idx
-    }
-    fn get_w_nom(&self) -> f32 {
-        return self.bus.w_nom
-    }
 }
 
 pub fn build_line_to_bus<'a, const X: usize, const N: usize>(line: &'a mut dyn Line<f32, N>, bus: AcVoltSrc<f32>) -> LineToBus<'a, f32, X, N> {
     // Initialize x to the states of the line and bus
     let mut x: Vec<f32, X> = na::zero();
+    let w_nom = bus.w_nom;
     let x_bus = bus.get_x();
     let x_line = line.get_x();
     let mut x_l = x.fixed_slice_mut::<2, 1>(0, 0); 
@@ -512,7 +542,8 @@ pub fn build_line_to_bus<'a, const X: usize, const N: usize>(line: &'a mut dyn L
     LineToBus { 
         line, 
         bus, 
-        
         x,
+        theta_idx: StateLimits::new_theta_wrap([1], w_nom),
+        step_method: rk2_step,
     }
 }

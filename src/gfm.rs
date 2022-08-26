@@ -1,6 +1,6 @@
 use crate::calculations::*;
 use crate::constants::*;
-use crate::dynamics::*;
+use dynamics::*;
 use crate::inverter::*;
 use crate::reference_frames::*;
 use crate::*;
@@ -14,12 +14,12 @@ const DVOC_STATES: usize = 2;
 const DVOC_INPUTS: usize = 2;
 type DvocStates<T> =  Vec<T, DVOC_STATES>;
 /* Define a dVOC controller */
-pub struct DvocController<T: Num, const X: usize, const U: usize> {
+pub struct DvocController<T: Num> {
     // Internal States
     pub v: T,  // voltage state (p.u.)
     pub theta: T, // angle state (p.u.)
     pub x: DvocStates<T>, // array of states; [v, theta]
-    theta_idx: ThetaIdx, // index of theta value; 1 for dVOC states
+    theta_idx: StateLimits<T, 1>,  // Theta wraps index is 1
 
     // Other Parameters
     pub v_nom: T, // nominal voltage (V)
@@ -32,13 +32,7 @@ pub struct DvocController<T: Num, const X: usize, const U: usize> {
     pub q_ref: T,  // Reactive power reference (p.u.)
 
     n_phase: T, // # of phases for power calculation (e.g. Single-Phase, 1., or Three-Phase, 3.)
-    step_method: fn(&mut dyn StepDynamics<T, X, U>, T, [T; U])-> Vec<T, X>,
-}
-
-impl<T: Num, const X: usize, const U: usize> HasStepFunc<T, X, U> for DvocController<T, X, U> {
-    fn get_step_func(&self) -> fn(&mut dyn StepDynamics<T, X, U>, T, [T; U])-> Vec<T, X> {
-        return self.step_method;
-    }
+    step_method: fn(&mut dyn StepDynamics<T, DVOC_STATES, DVOC_INPUTS>, T, [T; DVOC_INPUTS])-> Vec<T, DVOC_STATES>,
 }
 
 impl Dynamics<f32, DVOC_STATES, DVOC_INPUTS> for DvocController<f32> {
@@ -60,6 +54,18 @@ impl Dynamics<f32, DVOC_STATES, DVOC_INPUTS> for DvocController<f32> {
     }
 }
 
+impl StepDynamics<f32, DVOC_STATES, DVOC_INPUTS> for DvocController<f32> {
+    // Steps the dynamics
+    // # Arguments
+    // * 'u' - inputs (p.u.) as an array of T values: [input1, input2, ...]
+    // # Returns the dynamics, 'dx_dt' used to step the states
+    fn step(&mut self, dt: f32, u: [f32; DVOC_INPUTS]) -> Vec<f32, DVOC_STATES> {
+        let dx_dt = (self.step_method)(self, dt, u);
+        wrap_angle(&mut self.x, &self.theta_idx);
+        return dx_dt 
+    }
+}
+
 // Implement functions for getting and setting the states of the dVOC object
 impl<T: Num> XState<T, DVOC_STATES, DVOC_INPUTS> for DvocController<T> {
     fn get_x(&self) -> &Vec<T, DVOC_STATES> {
@@ -67,12 +73,6 @@ impl<T: Num> XState<T, DVOC_STATES, DVOC_INPUTS> for DvocController<T> {
     }
     fn set_x(&mut self, x: Vec<T, DVOC_STATES>) {
         self.x = x;
-    }
-    fn get_theta_idx(&self) -> &ThetaIdx {
-        return &self.theta_idx
-    }
-    fn get_w_nom(&self) -> T {
-        return self.w_nom
     }
 }
 
@@ -104,6 +104,10 @@ impl InvInterface<f32, DVOC_STATES> for DvocController<f32> {  // TODO: Determin
     fn output(&self) -> [f32; 2] {
         self.get_voltage()
     }
+    // Returns the nominal frequency of the controller
+    fn get_w_nom(&self) -> f32 {
+        return self.w_nom
+    }
 }
 impl InvController<f32, DVOC_STATES> for DvocController<f32> {}
 
@@ -115,13 +119,14 @@ pub fn build_dvoc_controller(v_nom: f32, w_nom: f32, xi: f32, c: f32, n_phase: f
         v: 1.,  
         theta: 0.,
         x: na::Vector2::new(1., 0.),
-        theta_idx: ThetaIdx {has_theta: true, theta_idx: 1},
+        theta_idx: StateLimits::new_theta_wrap([1], w_nom),
         kv: v_nom,
         xi,
         c,
         p_ref: 0.,
         q_ref: 0.,
         n_phase,
+        step_method: rk2_step,
     }
 }
 
@@ -133,13 +138,14 @@ pub fn build_default_dvoc_controller(v_nom: f32, f_nom: f32) -> DvocController<f
         v: 1.,  
         theta: 0.,
         x: na::Vector2::new(1., 0.),
-        theta_idx: ThetaIdx {has_theta: true, theta_idx: 1},
+        theta_idx: StateLimits::new_theta_wrap([1], 2.*PI * f_nom),
         kv: v_nom,
         xi: 15.,
         c: 0.2679,
         p_ref: 0.,
         q_ref: 0.,
         n_phase: 3.,
+        step_method: rk2_step,
     }
 }
 
@@ -153,7 +159,7 @@ type DroopStates<T> =  Vec<T, DROOP_STATES>;
 pub struct DroopController<T: Num> {
     // Internal States
     pub x: DroopStates<T>,  // [theta: angle state (p.u.), p_filt: low-pass filter active power (p.u.), q_filt: low-pass filter reactive power (p.u.)]
-    theta_idx: ThetaIdx,  // Theta index is 0
+    theta_idx: StateLimits<T, 1>,  // Theta wraps index is 0
     
     // Other Parameters
     pub v_nom: T, // nominal voltage (V)
@@ -165,6 +171,7 @@ pub struct DroopController<T: Num> {
     pub q_ref: T,  // Reactive power reference (p.u.)
 
     n_phase: T, // # of phases for power calculation (e.g. Single-Phase, 1., or Three-Phase, 3.)
+    step_method: fn(&mut dyn StepDynamics<T, DROOP_STATES, DROOP_INPUTS>, T, [T; DROOP_INPUTS])-> Vec<T, DROOP_STATES>,
 }
 
 impl Dynamics<f32, DROOP_STATES, DROOP_INPUTS> for DroopController<f32> {
@@ -187,6 +194,18 @@ impl Dynamics<f32, DROOP_STATES, DROOP_INPUTS> for DroopController<f32> {
     }
 }
 
+impl StepDynamics<f32, DROOP_STATES, DROOP_INPUTS> for DroopController<f32> {
+    // Steps the dynamics
+    // # Arguments
+    // * 'u' - inputs (p.u.) as an array of T values: [input1, input2, ...]
+    // # Returns the dynamics, 'dx_dt' used to step the states
+    fn step(&mut self, dt: f32, u: [f32; DROOP_INPUTS]) -> Vec<f32, DROOP_STATES> {
+        let dx_dt = (self.step_method)(self, dt, u);
+        wrap_angle(&mut self.x, &self.theta_idx);
+        return dx_dt 
+    }
+}
+
 // Implement functions for getting and setting the states of the dVOC object
 impl<T: Num> XState<T, DROOP_STATES, DROOP_INPUTS> for DroopController<T> {  // TODO: Implement XState trait with a macro as it is the same for each object
     fn get_x(&self) -> &Vec<T, DROOP_STATES> {
@@ -194,12 +213,6 @@ impl<T: Num> XState<T, DROOP_STATES, DROOP_INPUTS> for DroopController<T> {  // 
     }
     fn set_x(&mut self, x: Vec<T, DROOP_STATES>) {
         self.x = x;
-    }
-    fn get_theta_idx(&self) -> &ThetaIdx {
-        return &self.theta_idx
-    }
-    fn get_w_nom(&self) -> T {
-        return self.w_nom
     }
 }
 
@@ -231,6 +244,9 @@ impl InvInterface<f32, DROOP_STATES> for DroopController<f32> {  // TODO: Determ
     fn output(&self) -> [f32; 2] {
         return [self.compute_voltage(), self.x[(0)]]  // [v, theta]
     }
+    fn get_w_nom(&self) -> f32 {
+        return self.w_nom
+    }
 }
 impl InvController<f32, DROOP_STATES> for DroopController<f32> {}
 
@@ -250,28 +266,31 @@ pub fn build_droop_controller(v_nom: f32, w_nom: f32, mp: f32, mq: f32, w_c: f32
         v_nom,
         w_nom,
         x: na::Vector3::new(0., 0., 0.),
-        theta_idx: ThetaIdx {has_theta: true, theta_idx: 0},
+        theta_idx: StateLimits::new_theta_wrap([0], w_nom),
         mp,
         mq,
         w_c,
         p_ref: 0.,
         q_ref: 0.,
         n_phase,
+        step_method: rk2_step,
     }
 }
 
 pub fn build_default_droop_controller(v_nom: f32, f_nom: f32) -> DroopController<f32> {
+    let w_nom = 2. * PI * f_nom;
     DroopController {
         v_nom,
-        w_nom: 2. * PI * f_nom,
+        w_nom,
         x: na::Vector3::new(0., 0., 0.),
-        theta_idx: ThetaIdx {has_theta: true, theta_idx: 0},
+        theta_idx: StateLimits::new_theta_wrap([0], w_nom),
         mp: 0.0026,
         mq: 0.005,
         w_c: 2.*PI*30.,
         p_ref: 0.,
         q_ref: 0.,
         n_phase: 3.,
+        step_method: rk2_step,
     }
 }
 
@@ -285,7 +304,7 @@ type VsmStates<T> =  Vec<T, VSM_STATES>;
 pub struct VsmController<T: Num> {
     // Internal States
     pub x: VsmStates<T>,  // [theta: angle state (p.u.), p_filt: low-pass filter active power (p.u.), q_filt: low-pass filter reactive power (p.u.)]
-    theta_idx: ThetaIdx,  // Theta index is 0
+    theta_idx: StateLimits<T, 1>, // Theta, [0], wraps within -pi to pi
     
     // Other Parameters
     pub v_nom: T, // nominal voltage (V)
@@ -297,6 +316,7 @@ pub struct VsmController<T: Num> {
     pub q_ref: T,  // reactive power reference (p.u.)
 
     n_phase: T, // # of phases for power calculation (e.g. Single-Phase, 1., or Three-Phase, 3.)
+    step_method: fn(&mut dyn StepDynamics<T, VSM_STATES, VSM_INPUTS>, T, [T; VSM_INPUTS])-> Vec<T, VSM_STATES>,
 }
 
 impl Dynamics<f32, VSM_STATES, VSM_INPUTS> for VsmController<f32> {
@@ -319,6 +339,18 @@ impl Dynamics<f32, VSM_STATES, VSM_INPUTS> for VsmController<f32> {
     }
 }
 
+impl StepDynamics<f32, VSM_STATES, VSM_INPUTS> for VsmController<f32> {
+    // Steps the dynamics
+    // # Arguments
+    // * 'u' - inputs (p.u.) as an array of T values: [input1, input2, ...]
+    // # Returns the dynamics, 'dx_dt' used to step the states
+    fn step(&mut self, dt: f32, u: [f32; VSM_INPUTS]) -> Vec<f32, VSM_STATES> {
+        let dx_dt = (self.step_method)(self, dt, u);
+        wrap_angle(&mut self.x, &self.theta_idx);
+        return dx_dt 
+    }
+}
+
 // Implement functions for getting and setting the states of the dVOC object
 impl<T: Num> XState<T, VSM_STATES, VSM_INPUTS> for VsmController<T> {  // TODO: Implement XState trait with a macro as it is the same for each object
     fn get_x(&self) -> &Vec<T, VSM_STATES> {
@@ -326,12 +358,6 @@ impl<T: Num> XState<T, VSM_STATES, VSM_INPUTS> for VsmController<T> {  // TODO: 
     }
     fn set_x(&mut self, x: Vec<T, VSM_STATES>) {
         self.x = x;
-    }
-    fn get_theta_idx(&self) -> &ThetaIdx {
-        return &self.theta_idx
-    }
-    fn get_w_nom(&self) -> T {
-        return self.w_nom
     }
 }
 
@@ -363,6 +389,9 @@ impl InvInterface<f32, VSM_STATES> for VsmController<f32> {  // TODO: Determine 
     fn output(&self) -> [f32; 2] {
         return [self.compute_voltage(), self.x[(0)]]  // [v, theta]
     }
+    fn get_w_nom(&self) -> f32 {
+        return self.w_nom
+    }
 }
 impl InvController<f32, VSM_STATES> for VsmController<f32> {}
 
@@ -382,28 +411,31 @@ pub fn build_vsm_controller(v_nom: f32, w_nom: f32, mp: f32, mq: f32, w_c: f32, 
         v_nom,
         w_nom,
         x: na::Vector3::new(0., 0., 0.),
-        theta_idx: ThetaIdx {has_theta: true, theta_idx: 0},
+        theta_idx: StateLimits::new_theta_wrap([0], w_nom),
         mp,
         mq,
         w_c,
         p_ref: 0.,
         q_ref: 0.,
         n_phase,
+        step_method: rk2_step,
     }
 }
 
 pub fn build_default_vsm_controller(v_nom: f32, f_nom: f32) -> VsmController<f32> {
+    let w_nom =  2. * PI * f_nom;
     VsmController {
         v_nom,
-        w_nom: 2. * PI * f_nom,
+        w_nom,
         x: na::Vector3::new(0., 0., 0.),
-        theta_idx: ThetaIdx {has_theta: true, theta_idx: 0},
+        theta_idx: StateLimits::new_theta_wrap([0], w_nom),
         mp: 0.0026,
         mq: 0.005,
         w_c: 2.*PI*30.,
         p_ref: 0.,
         q_ref: 0.,
         n_phase: 3.,
+        step_method: rk2_step,
     }
 }
 
@@ -437,7 +469,8 @@ pub struct DlvController<T: Num> {
 
     // Internal States
     pub x: DlvcStates<T>,  // [vd int, vq int, id int, iq int]
-    theta_idx: ThetaIdx,  // No angular states
+
+    //sat_idx: StateLimits<T, 1>,  //  Saturate current PI controller integral, x[1]
 }
 
 impl DlvController<f32> {
@@ -534,12 +567,6 @@ impl<T: Num> XState<T, DLVC_STATES, DLVC_INPUTS> for DlvController<T> {
     fn set_x(&mut self, x: Vec<T, DLVC_STATES>) {
         self.x = x;
     }
-    fn get_theta_idx(&self) -> &ThetaIdx {  // TODO: Possibly change this to a limiter so it can be used for PI integrator saturation as well as angle wrapping???
-        return &self.theta_idx
-    }
-    fn get_w_nom(&self) -> T {
-        return self.x_nom;
-    }
 }
 
 pub fn build_double_loop_voltage_controller(x_nom: f32, kp_v: f32, ki_v: f32, kp_i: f32, ki_i: f32, lf: f32, cf: f32, i_max: f32, i_min: f32) -> DlvController<f32> {
@@ -558,6 +585,5 @@ pub fn build_double_loop_voltage_controller(x_nom: f32, kp_v: f32, ki_v: f32, kp
         
         // Internal States
         x: na::Vector4::new(0., 0., 0., 0.),
-        theta_idx: ThetaIdx {has_theta: false, theta_idx: 0},
     }
 }

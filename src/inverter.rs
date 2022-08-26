@@ -11,7 +11,7 @@ Inverter Controller Interface
 ///     state and step the dynamics of the control object with and without input.
 /// -   Note this trait is seperate from the InvInterface so that the Inverter can also be implemented 
 ///     on the Inv struct.
-pub trait InvController<T: Num, const X: usize>: RK2Step<f32, X, 2> + // TODO: Base/Require the InvController to have implemented the NodeInterface trait
+pub trait InvController<T: Num, const X: usize>: StepDynamics<f32, X, 2> + // TODO: Base/Require the InvController to have implemented the NodeInterface trait
                                                  NoInputStep<f32, X, 2> + 
                                                  XState<f32, X, 2> + 
                                                  InvInterface<f32, X> 
@@ -26,7 +26,8 @@ pub trait InvInterface<T: Num, const X: usize> {
     fn set_q_ref(&mut self, q_ref: T) -> ();
     // TODO: Should we add get_w_nom and get_v_nom here as well or should this scaling be build into the functions (possibly add get_voltage_pu and set_voltage_pu) 
     /// Get the voltage reference from the Inverter controller
-    fn output(&self) -> [f32; 2];
+    fn output(&self) -> [T; 2];
+    fn get_w_nom(&self) -> T;
 }
 
 /* 
@@ -124,6 +125,9 @@ impl<'a, const X: usize> InvInterface<f32, X> for PresyncInvController<'a, f32, 
     }
     fn output(&self) -> [f32; 2] {
         self.ctrl.output()
+    }
+    fn get_w_nom(&self) -> f32 {
+        self.ctrl.get_w_nom()
     }
 }
 
