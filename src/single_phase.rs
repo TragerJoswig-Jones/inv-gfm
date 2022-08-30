@@ -11,7 +11,7 @@ const SOGI_INPUTS: usize = 1;
 type SogiStates<T> =  Vec<T, SOGI_STATES>;
 pub struct OrthogonalSysGenSogi<T: Num> {
     // parameters
-    pub w_res: T, // resonant frequency
+    pub w_res: T, // resonant frequency  // TODO: Create function to set this dynamically based on PLL omega
     pub k: T, // bandwidth scalar
 
     // states

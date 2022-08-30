@@ -89,12 +89,13 @@ impl Dynamics<f32, RL_STATES, RL_INPUTS> for RlBranch<f32> {
     // * 'u' - input voltages as an array of T values: (v1, theta1, v2, theta2)
     fn dynamics(&self, x: &RlStates<f32>, u: [f32; RL_INPUTS]) -> RlStates<f32> {
         let (v1_alpha, v1_beta, v2_alpha, v2_beta) = (u[0], u[1], u[2], u[3]);
-        let mut v1_ab = AlphaBeta::from_ab_(v1_alpha, v1_beta);
+        let v1_ab = AlphaBeta::from_ab_(v1_alpha, v1_beta);
+        let v2_ab: AlphaBeta<f32>;
         if !self.switch_closed {
-            v1_ab.alpha = v2_alpha;
-            v1_ab.beta = v2_beta;
+            v2_ab = AlphaBeta::from_ab_(v1_alpha, v1_beta);
+        } else {
+            v2_ab = AlphaBeta::from_ab_(v2_alpha, v2_beta);
         }
-        let v2_ab = AlphaBeta::from_ab_(v2_alpha, v2_beta);
         let i_ab = AlphaBeta::from_ab_(x[0], x[1]);
         
         // calculate dynamics
@@ -165,7 +166,7 @@ pub fn build_rl_branch(i_base: f32, w_nom: f32, rf: f32, lf: f32) -> RlBranch<f3
         rf,
         lf,
 
-        switch_closed: false,
+        switch_closed: true,
 
         // Internal States
         i_alpha: 0.,
@@ -242,7 +243,7 @@ pub fn build_rc_branch(v_nom: f32, rc: f32, cf: f32) -> RcBranch<f32> {
 }
 
 /* 
-Define an LCL Filter object 
+LCL Filter object 
 */
 const LCL_STATES: usize = 6;
 const LCL_INPUTS: usize = 4;
@@ -373,7 +374,7 @@ pub fn build_lcl_filter(w_nom: f32, i_base: f32, v_nom: f32, rf: f32, lf: f32, r
         rc_branch, 
         to_rl_branch,
 
-        switch_closed: false,
+        switch_closed: true,
 
         // Internal States
         x: na::Vector6::new(0., 0., SQRT_2, 0., 0., 0.),
@@ -527,7 +528,7 @@ impl<'a, const X: usize, const N: usize> XState<f32, X, LTB_INPUTS> for LineToBu
     }
 }
 
-pub fn build_line_to_bus<'a, const X: usize, const N: usize>(line: &'a mut dyn Line<f32, N>, bus: AcVoltSrc<f32>) -> LineToBus<'a, f32, X, N> {
+pub fn build_line_to_bus<'a, const X: usize, const L: usize>(line: &'a mut dyn Line<f32, L>, bus: AcVoltSrc<f32>) -> LineToBus<'a, f32, X, L> {
     // Initialize x to the states of the line and bus
     let mut x: Vec<f32, X> = na::zero();
     let w_nom = bus.w_nom;
@@ -535,7 +536,7 @@ pub fn build_line_to_bus<'a, const X: usize, const N: usize>(line: &'a mut dyn L
     let x_line = line.get_x();
     let mut x_l = x.fixed_slice_mut::<2, 1>(0, 0); 
     x_l.copy_from(x_bus);
-    let mut x_r = x.fixed_slice_mut::<N, 1>(N-1, 0);
+    let mut x_r = x.fixed_slice_mut::<L, 1>(X-L, 0);
     x_r.copy_from(x_line);
 
     // Construct and return the LineToBus struct 
