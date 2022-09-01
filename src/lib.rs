@@ -9,7 +9,7 @@ use core::ops::{Add, Sub, Mul, Div, Rem};
 /* unifi-gfm crate modules */
 pub mod calculations;
 pub mod constants;
-mod dynamics;
+pub mod dynamics;
 pub mod gfm;
 pub mod gfl;
 pub mod inverter;

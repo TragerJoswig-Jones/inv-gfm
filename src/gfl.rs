@@ -24,7 +24,7 @@ pub struct SrfPhaseLockedLoop<T: Num> {
     pub x: SrfPllStates<T>, // array of states; [theta, PI controller integral]
     pub dx_dt: SrfPllStates<T>, // TODO: DETERMINE IF I WANT TO STORE THIS VALUE FOR COMPUTING THE OUTPUT?
 
-    pub theta_idx: ThetaIdx,
+    wrap_idx: StateLimits<T, 1>,  // Wrap Theta, x[0]
 }
 
 impl SrfPhaseLockedLoop<f32> {  
@@ -35,13 +35,14 @@ impl SrfPhaseLockedLoop<f32> {
             ki, 
             x: na::Vector2::new(0., 0.),
             dx_dt: na::Vector2::new(w_nom, 0.),
-            theta_idx: ThetaIdx { has_theta: true, theta_idx: 0 } }
+            wrap_idx: StateLimits::new_theta_wrap([0], w_nom),
+        }
     }
 
-    // Steps the PLL dynamics and stores dx_dt
-    pub fn step_dx_dt(&mut self, dt: f32, u: [f32; SRF_PLL_INPUTS]) -> () {  // TODO: DETERMINE IF I WANT TO STORE THIS VALUE FOR COMPUTING THE OUTPUT?
-        self.dx_dt = self.step(dt, u);
-    }
+    // // Steps the PLL dynamics and stores dx_dt
+    // pub fn step_dx_dt(&mut self, dt: f32, u: [f32; SRF_PLL_INPUTS]) -> () {  // TODO: DETERMINE IF I WANT TO STORE THIS VALUE FOR COMPUTING THE OUTPUT?
+    //     self.dx_dt = self.step(dt, u);
+    // }
 
     // pub fn output_from_dx_dt(&self) -> [f32; SRF_PLL_OUTPUTS] {
     //     let v_mag = libm::fabsf(vd);
@@ -74,12 +75,6 @@ impl<T: Num> XState<T, SRF_PLL_STATES, SRF_PLL_INPUTS> for SrfPhaseLockedLoop<T>
     fn set_x(&mut self, x: Vec<T, SRF_PLL_STATES>) {
         self.x = x;
     }
-    fn get_theta_idx(&self) -> &ThetaIdx {
-        return &self.theta_idx
-    }
-    fn get_w_nom(&self) -> T {
-        return self.w_nom
-    }
 }
 
 /* 
@@ -100,15 +95,13 @@ pub struct DsrfPhaseLockedLoop<T: Num> {
     // states
     pub x: DsrfPllStates<T>, // array of states; [theta, d^(+1) filt, q^(+1) filt, d^(-1) filt, q^(-1) filt, PI controller integral]
     pub dx_dt: DsrfPllStates<T>, // TODO: DETERMINE IF I WANT TO STORE THIS VALUE FOR COMPUTING THE OUTPUT?
-
-    pub theta_idx: ThetaIdx,
 }
 
 impl DsrfPhaseLockedLoop<f32> {
-    // Steps the PLL dynamics and stores dx_dt
-    pub fn step_dx_dt(&mut self, dt: f32, u: [f32; DSRF_PLL_INPUTS]) -> () {  // TODO: DETERMINE IF I WANT TO STORE THIS VALUE FOR COMPUTING THE OUTPUT?
-        self.dx_dt = self.step(dt, u);
-    }
+    // // Steps the PLL dynamics and stores dx_dt
+    // pub fn step_dx_dt(&mut self, dt: f32, u: [f32; DSRF_PLL_INPUTS]) -> () {  // TODO: DETERMINE IF I WANT TO STORE THIS VALUE FOR COMPUTING THE OUTPUT?
+    //     self.dx_dt = self.step(dt, u);
+    // }
 
     pub fn output(&self, u: [f32; DSRF_PLL_INPUTS]) -> [f32; DSRF_PLL_OUTPUTS] {  // TODO: Remove inputs here?
         let x = self.x;
@@ -155,12 +148,6 @@ impl<T: Num> XState<T, DSRF_PLL_STATES, DSRF_PLL_INPUTS> for DsrfPhaseLockedLoop
     fn set_x(&mut self, x: Vec<T, DSRF_PLL_STATES>) {
         self.x = x;
     }
-    fn get_theta_idx(&self) -> &ThetaIdx {
-        return &self.theta_idx
-    }
-    fn get_w_nom(&self) -> T {
-        return self.w_nom
-    }
 }
 
 /* 
@@ -181,7 +168,7 @@ pub struct GflController<T: Num> {
     pub v: T,  // voltage state (p.u.)
     pub theta: T, // angle state (p.u.)
     pub x: GflStates<T>, // array of states; [v, theta]
-    theta_idx: ThetaIdx, // index of theta value; 1 for dVOC states
+    theta_idx: StateLimits<T, 1>, // index of theta value; 1 for GFL states
 
     // Other Parameters
     pub v_nom: T, // nominal voltage (V)
@@ -194,6 +181,7 @@ pub struct GflController<T: Num> {
     pub q_ref: T,  // Reactive power reference (p.u.)
 
     n_phase: T, // # of phases for power calculation (e.g. Single-Phase, 1., or Three-Phase, 3.)
+    step_method: fn(&mut dyn StepDynamics<T, GFL_STATES, GFL_INPUTS>, T, [T; GFL_INPUTS])-> Vec<T, GFL_STATES>,
 }
 
 impl Dynamics<f32, GFL_STATES, GFL_INPUTS> for GflController<f32> {
@@ -215,6 +203,18 @@ impl Dynamics<f32, GFL_STATES, GFL_INPUTS> for GflController<f32> {
     }
 }
 
+impl StepDynamics<f32, GFL_STATES, GFL_INPUTS> for GflController<f32> {
+    // Steps the dynamics
+    // # Arguments
+    // * 'u' - inputs (p.u.) as an array of T values: [input1, input2, ...]
+    // # Returns the dynamics, 'dx_dt' used to step the states
+    fn step(&mut self, dt: f32, u: [f32; GFL_INPUTS]) -> Vec<f32, GFL_STATES> {
+        let dx_dt = (self.step_method)(self, dt, u);
+        wrap_angle(&mut self.x, &self.theta_idx);
+        return dx_dt 
+    }
+}
+
 // Implement functions for getting and setting the states of the dVOC object
 impl<T: Num> XState<T, GFL_STATES, GFL_INPUTS> for GflController<T> {
     fn get_x(&self) -> &Vec<T, GFL_STATES> {
@@ -222,12 +222,6 @@ impl<T: Num> XState<T, GFL_STATES, GFL_INPUTS> for GflController<T> {
     }
     fn set_x(&mut self, x: Vec<T, GFL_STATES>) {
         self.x = x;
-    }
-    fn get_theta_idx(&self) -> &ThetaIdx {
-        return &self.theta_idx
-    }
-    fn get_w_nom(&self) -> T {
-        return self.w_nom
     }
 }
 
@@ -259,6 +253,9 @@ impl InvInterface<f32, GFL_STATES> for GflController<f32> {  // TODO: Determine 
     fn output(&self) -> [f32; 2] {
         self.get_voltage()
     }
+    fn get_w_nom(&self) -> f32 {
+        return self.w_nom
+    }
 }
 impl InvController<f32, GFL_STATES> for GflController<f32> {}
 
@@ -270,12 +267,13 @@ pub fn build_gfl_controller(v_nom: f32, w_nom: f32, xi: f32, c: f32, n_phase: f3
         v: 1.,  
         theta: 0.,
         x: na::Vector2::new(1., 0.),
-        theta_idx: ThetaIdx {has_theta: true, theta_idx: 1},
+        theta_idx: StateLimits::new_theta_wrap([0], w_nom),
         kv: v_nom,
         xi,
         c,
         p_ref: 0.,
         q_ref: 0.,
         n_phase,
+        step_method: rk2_step,
     }
 }
