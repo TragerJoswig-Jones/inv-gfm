@@ -6,11 +6,19 @@ use crate::reference_frames::*;
 use crate::*;
 
 // TODO: Make the input to the PLL in the alpha-beta reference frame so it can be generalized to single-phase or three-phase inverters?
+const PLL_INPUTS: usize = 3;
+pub trait PhaseLockLoop<T: Num, const X: usize>: StepDynamics<f32, X, PLL_INPUTS> {
+    // /// Function description
+    // fn get_voltage(&self) -> [T; 2];
+    fn get_voltage_magnitude(&self, u: [T; PLL_INPUTS]) -> T;
+    fn get_voltage_angle(&self) -> T;
+    fn get_omega(&self) -> T;
+}
 
 /* 
 Synchronous Reference Frame (SRF) Phase-locked Loop (PLL)
 */
-const SRF_PLL_STATES: usize = 2;
+pub const SRF_PLL_STATES: usize = 2;
 const SRF_PLL_INPUTS: usize = 3;
 const SRF_PLL_OUTPUTS: usize = 3;
 type SrfPllStates<T> =  Vec<T, SRF_PLL_STATES>;
@@ -23,8 +31,10 @@ pub struct SrfPhaseLockedLoop<T: Num> {
     // states
     pub x: SrfPllStates<T>, // array of states; [theta, PI controller integral]
     pub dx_dt: SrfPllStates<T>, // TODO: DETERMINE IF I WANT TO STORE THIS VALUE FOR COMPUTING THE OUTPUT?
+    pub omega: T, // stores the previously calculated omega value
 
-    wrap_idx: StateLimits<T, 1>,  // Wrap Theta, x[0]
+    theta_idx: StateLimits<T, 1>,  // Wrap Theta, x[0]
+    step_method: fn(&mut dyn StepDynamics<T, SRF_PLL_STATES, SRF_PLL_INPUTS>, T, [T; SRF_PLL_INPUTS])-> Vec<T, SRF_PLL_STATES>,
 }
 
 impl SrfPhaseLockedLoop<f32> {  
@@ -34,8 +44,10 @@ impl SrfPhaseLockedLoop<f32> {
             kp, 
             ki, 
             x: na::Vector2::new(0., 0.),
-            dx_dt: na::Vector2::new(w_nom, 0.),
-            wrap_idx: StateLimits::new_theta_wrap([0], w_nom),
+            dx_dt: na::Vector2::new(1., 0.),
+            omega: 1.,
+            theta_idx: StateLimits::new_theta_wrap([0], w_nom),
+            step_method: rk2_step,
         }
     }
 
@@ -52,20 +64,33 @@ impl SrfPhaseLockedLoop<f32> {
     pub fn output(&self, u: [f32; SRF_PLL_INPUTS]) -> [f32; SRF_PLL_OUTPUTS] {
         let x = self.x;
         let sin_cos = SinCos::from_theta(x[(0)]);
-        let v_in_dq = DQZ::from_abc(u[0], u[1], u[2], &sin_cos);
-        let omega = self.w_nom + self.kp * v_in_dq.q + self.ki * x[(1)];
-        let v_mag = libm::fabsf(v_in_dq.d);
+        let v_in_dq = DQZ::from_ab(u[0], u[1], u[2], &sin_cos);
+        let omega = 1. + self.kp * v_in_dq.q + self.ki * x[(1)];
+        let v_mag = libm::sqrtf(v_in_dq.d*v_in_dq.d + v_in_dq.q*v_in_dq.q) / SQRT_2;
         [v_mag, self.x[(0)], omega]
     }
 }
 
 impl Dynamics<f32, SRF_PLL_STATES, SRF_PLL_INPUTS> for SrfPhaseLockedLoop<f32> {
     fn dynamics(&self, x:  &SrfPllStates<f32>, u: [f32; SRF_PLL_INPUTS]) ->  SrfPllStates<f32> {
-        let sin_cos = SinCos::from_theta(x[(0)]);
-        let v_in_dq = DQZ::from_abc(u[0], u[1], u[2], &sin_cos);  // TODO: Possibly make, v_in_dq, the input u to reduce calculations for the output?
-        let omega = self.w_nom + self.kp * v_in_dq.q + self.ki * x[(1)];
+        let sin_cos = SinCos::from_theta(x[(0)] * self.w_nom);
+        let v_in_dq = DQZ::from_ab(u[0], u[1], u[2], &sin_cos);  // TODO: Possibly make, v_in_dq, the input u to reduce calculations for the output?
+        let omega = 1. + self.kp * v_in_dq.q + self.ki * x[(1)];
         return na::Vector2::new(omega, v_in_dq.q);
     }
+}
+
+impl StepDynamics<f32, SRF_PLL_STATES, SRF_PLL_INPUTS> for SrfPhaseLockedLoop<f32> {
+    // Steps the dynamics
+    // # Arguments
+    // * 'u' - inputs (p.u.) as an array of T values: [input1, input2, ...]
+    // # Returns the dynamics, 'dx_dt' used to step the states
+    fn step(&mut self, dt: f32, u: [f32; SRF_PLL_INPUTS]) -> Vec<f32, SRF_PLL_STATES> {
+        let dx_dt = (self.step_method)(self, dt, u);
+        self.omega = dx_dt[0];
+        wrap_angle(&mut self.x, &self.theta_idx);
+        return dx_dt
+     }
 }
 
 impl<T: Num> XState<T, SRF_PLL_STATES, SRF_PLL_INPUTS> for SrfPhaseLockedLoop<T> {
@@ -77,11 +102,23 @@ impl<T: Num> XState<T, SRF_PLL_STATES, SRF_PLL_INPUTS> for SrfPhaseLockedLoop<T>
     }
 }
 
+impl PhaseLockLoop<f32, SRF_PLL_STATES> for SrfPhaseLockedLoop<f32> {
+    fn get_voltage_magnitude(&self, u: [f32; PLL_INPUTS]) -> f32 {
+        libm::sqrtf(u[0]*u[0] + u[1]*u[1])  // Caculates voltage magnitude from alpha-beta voltages
+    } 
+    fn get_voltage_angle(&self) -> f32 {
+        self.x[(0)]
+    }
+    fn get_omega(&self) -> f32 {
+        self.omega
+    }
+}
+
 /* 
 Double Synchronous Reference Frame (DSRF) Phase-locked Loop (PLL)
 */
 // Based on "Double Synchronous Reference Frame PLL for Power Converters Control" by Rodríguez P., Et. al
-const DSRF_PLL_STATES: usize = 6;
+pub const DSRF_PLL_STATES: usize = 6;
 const DSRF_PLL_INPUTS: usize = 3;
 const DSRF_PLL_OUTPUTS: usize = 3;
 type DsrfPllStates<T> =  Vec<T, DSRF_PLL_STATES>;
@@ -112,7 +149,7 @@ impl DsrfPhaseLockedLoop<f32> {
     fn decoupling_cell(&self, theta: f32, d_n: f32, q_n: f32, d_m: f32, q_m: f32, d_n_filt: f32, q_n_filt: f32, d_m_filt: f32, q_m_filt: f32) -> [f32; 4] {
         // Based on eq. 11 from "Double Synchronous Reference Frame PLL for Power Converters Control" by Rodríguez P., Et. al
         // n is dq^(+1) reference frame
-        let sin_cos = SinCos::from_theta(2. * theta);
+        let sin_cos = SinCos::from_theta(2. * theta * self.w_nom);
         let d_n_star = d_n - d_m_filt * sin_cos.cos_value() - q_m_filt * sin_cos.sin_value();
         let q_n_star = q_n - q_m_filt * sin_cos.cos_value() + d_m_filt * sin_cos.sin_value(); 
         let d_m_star = d_m - d_n_filt * sin_cos.cos_value() + q_n_filt * sin_cos.sin_value();
@@ -125,7 +162,7 @@ impl Dynamics<f32, DSRF_PLL_STATES, DSRF_PLL_INPUTS> for DsrfPhaseLockedLoop<f32
     // Based on Fig.5 from "Double Synchronous Reference Frame PLL for Power Converters Control" by Rodríguez P., Et. al
     fn dynamics(&self, x:  &DsrfPllStates<f32>, u: [f32; DSRF_PLL_INPUTS]) ->  DsrfPllStates<f32> {
         let sin_cos = SinCos::from_theta(x[(0)]);
-        let v_alpha_beta = AlphaBeta::from_abc(u[0], u[1], u[2]);
+        let v_alpha_beta = AlphaBeta::from_ab(u[0], u[1], u[2]);
         let v_dq_pos = v_alpha_beta.to_dqz(&sin_cos); 
         let v_dq_neg = v_alpha_beta.to_dqz(&sin_cos.flip_theta()); 
         
@@ -257,7 +294,7 @@ impl InvInterface<f32, GFL_STATES> for GflController<f32> {  // TODO: Determine 
         return self.w_nom
     }
 }
-impl InvController<f32, GFL_STATES> for GflController<f32> {}
+impl InvController<f32, GFL_STATES, GFL_INPUTS> for GflController<f32> {}
 
 pub fn build_gfl_controller(v_nom: f32, w_nom: f32, xi: f32, c: f32, n_phase: f32) -> GflController<f32> {
     GflController {

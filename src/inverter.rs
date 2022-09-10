@@ -11,10 +11,10 @@ Inverter Controller Interface
 ///     state and step the dynamics of the control object with and without input.
 /// -   Note this trait is seperate from the InvInterface so that the Inverter can also be implemented 
 ///     on the Inv struct.
-pub trait InvController<T: Num, const X: usize>: StepDynamics<f32, X, 2> + // TODO: Base/Require the InvController to have implemented the NodeInterface trait
-                                                 NoInputStep<f32, X, 2> + 
-                                                 XState<f32, X, 2> + 
-                                                 InvInterface<f32, X> 
+pub trait InvController<T: Num, const X: usize, const U: usize>: StepDynamics<f32, X, U> + // TODO: Base/Require the InvController to have implemented the NodeInterface trait
+                                                                 NoInputStep<f32, X, U> + 
+                                                                 XState<f32, X, U> + 
+                                                                 InvInterface<f32, X> 
 {}
 
 pub trait InvInterface<T: Num, const X: usize> {
@@ -34,21 +34,21 @@ pub trait InvInterface<T: Num, const X: usize> {
 Inverter Controller Presynchronization
 */
 /// Defines a 'PresyncInvController' structure that wraps an 'InvController' object and adds presynchronization capabilities
-pub struct PresyncInvController<'a, T: Num, const X: usize> {
-    pub ctrl: &'a mut dyn InvController<T, X>,  // A reference to a grid forming control object
+pub struct PresyncInvController<'a, T: Num, const X: usize, const U: usize> {
     synced: bool,  // If false, then presynchronization dynamics will be used
     gamma: T,  // A scalar used for presynchronization dynamics
     pub sync_tol: T,  // The tolerance for the difference between the grid and inverter voltages to be considered synchronized during presynchronization
+    pub ctrl: &'a mut dyn InvController<T, X, U>,  // A reference to a grid forming control object  // TODO: CHECK IF THIS CAN/SHOULD BE IMPLEMENTED WITHOUT THE REFERENCE
 }
 
 /// The 'Presync' trait allows a Inverter controller to step its dynamics such that it can synchronize to an AC voltage
-pub trait Presync<T: Num, const X: usize> {
+pub trait Presync<T: Num, const X: usize, const U: usize> {
     /// Steps the Inverter controller by timestep 'dt' using dynamics according to 'synced' given the inputs 
     /// 'u' (An array of alpha beta currents in p.u.: [i.alpha, i.beta]) and 'vg' (An array of alpha beta voltages in p.u.: [vg.alpha, vg.beta]).
-    fn inv_step(&mut self, dt: T, u: [T; 2], vg: [T; 2]) -> Vec<f32, X>;
+    fn inv_step(&mut self, dt: T, u: [T; U], vg: [T; 2]) -> Vec<f32, X>;
     /// Steps the Inverter controller by timestep 'dt' using dynamics such that it synchronizes to the input voltage,
     /// 'vg' (An array of alpha beta voltages in p.u.: [vg.alpha, vg.beta]).
-    fn presync_step(&mut self, dt: T, vg: [T; 2]) -> Vec<f32, X>;
+    fn presync_step(&mut self, dt: T, u: [T; U], vg: [T; 2]) -> Vec<f32, X>;
     /// Sets the synced parameter of the inverter to true
     fn disable_presync(&mut self) -> ();
     /// Sets the synced parameter of the inverter to false
@@ -57,16 +57,18 @@ pub trait Presync<T: Num, const X: usize> {
     fn check_sync(&self, vg: [T; 2]) -> bool;
 }
 
-impl<'a, const X: usize> Presync<f32, X> for PresyncInvController<'a, f32, X>{
-    fn inv_step(&mut self, dt: f32, u: [f32; 2], vg: [f32; 2]) -> Vec<f32, X> {
+impl<'a, const X: usize, const U: usize> Presync<f32, X, U> for PresyncInvController<'a, f32, X, U>{
+    fn inv_step(&mut self, dt: f32, u: [f32; U], vg: [f32; 2]) -> Vec<f32, X> {
         if self.synced {
             return self.ctrl.step(dt, u);
         }
         else {
-            return self.presync_step(dt, vg);
+            let mut u_sync = u;  // TODO: Determine a better way to step during presynch for the controllers with PLLs. Here I am zeroing out the measured currents. This is a somewhat ugly approach though...
+            u_sync[0] = 0.; u_sync[1] = 0.;
+            return self.presync_step(dt, u, vg);
         }
     }
-    fn presync_step(&mut self, dt: f32, vg: [f32; 2]) -> Vec<f32, X> {
+    fn presync_step(&mut self, dt: f32, u: [f32; U], vg: [f32; 2]) -> Vec<f32, X> {
         let v_inv = self.get_pu_voltage();
         let sin_cos = SinCos::<f32>::from_theta(v_inv[1] * self.ctrl.get_w_nom());
         // Presynchronization dynamics based on ('A Pre-synchronization Strategy for Grid-forming Virtual Oscillator Controlled Inverters' by Lu, M., Et al.)
@@ -75,7 +77,8 @@ impl<'a, const X: usize> Presync<f32, X> for PresyncInvController<'a, f32, X>{
         let dv_sync = -self.gamma * (v_inv[0] - ((vg[0] * sin_cos.cos_value() + vg[1] * sin_cos.sin_value()))  / SQRT_2) * dt;  // TODO: Check the conversion to alpha-beta/polar mixed
         let w_sync = self.gamma / v_inv[0] * (vg[1] * sin_cos.cos_value() - vg[0] * sin_cos.sin_value()) * dt;  // TODO: Determine if this needs to be scaled by 1 / w_nom
         self.ctrl.set_voltage([v_inv[0] + dv_sync, v_inv[1] + w_sync]);
-        let dx_dt = self.ctrl.step(dt, [0.; 2]);   // Zero-input inverter dynamics
+        let dx_dt: Vec<f32, X>;
+        dx_dt = self.ctrl.step(dt, u);   // Zero current input inverter dynamics; Note that u is required only for PLL based controllers
         // Combine the default dynamics and presync dynamics to return
         let mut dx_dt_sync: Vec<f32, X> = na::zero();
         dx_dt_sync[(0)] = dv_sync; dx_dt_sync[(1)] = w_sync;
@@ -107,7 +110,7 @@ impl<'a, const X: usize> Presync<f32, X> for PresyncInvController<'a, f32, X>{
 // Implement InvInterface for Inverter object such that users can make calls to functions directly from the Inverter object
 // TODO: With this should we make the ctrl parameter private???
 // TODO: Crate a seperate trait 'NodeInterface' with voltage calls and make it a requirement of GfmInterface (Implement NodeInterface on ACVoltSrc)
-impl<'a, const X: usize> InvInterface<f32, X> for PresyncInvController<'a, f32, X> {
+impl<'a, const X: usize, const U: usize> InvInterface<f32, X> for PresyncInvController<'a, f32, X, U> {
     fn get_voltage(&self) -> [f32; 2] {
         self.ctrl.get_voltage()
     }
@@ -131,7 +134,7 @@ impl<'a, const X: usize> InvInterface<f32, X> for PresyncInvController<'a, f32, 
     }
 }
 
-pub fn add_presynch<'a, const X: usize>(ctrl: &'a mut dyn InvController<f32, X>, gamma: f32) -> PresyncInvController<'a, f32, X> {
+pub fn add_presynch<'a, const X: usize, const U: usize>(ctrl: &'a mut dyn InvController<f32, X, U>, gamma: f32) -> PresyncInvController<'a, f32, X, U> {
     PresyncInvController { ctrl, synced: false, gamma, sync_tol: 1e-3 }
 }
 

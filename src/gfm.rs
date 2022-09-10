@@ -1,6 +1,7 @@
 use crate::calculations::*;
 use crate::constants::*;
-use dynamics::*;
+use crate::dynamics::*;
+use crate::gfl::*;
 use crate::inverter::*;
 use crate::reference_frames::*;
 use crate::*;
@@ -109,7 +110,7 @@ impl InvInterface<f32, DVOC_STATES> for DvocController<f32> {  // TODO: Determin
         return self.w_nom
     }
 }
-impl InvController<f32, DVOC_STATES> for DvocController<f32> {}
+impl InvController<f32, DVOC_STATES, DVOC_INPUTS> for DvocController<f32> {}
 
 pub fn build_dvoc_controller(v_nom: f32, w_nom: f32, xi: f32, c: f32, n_phase: f32) -> DvocController<f32> {
     DvocController {
@@ -153,7 +154,7 @@ pub fn build_default_dvoc_controller(v_nom: f32, f_nom: f32) -> DvocController<f
 Droop controller implementation 
 */
 const DROOP_STATES: usize = 3;
-const DROOP_INPUTS: usize = 2;
+const DROOP_INPUTS: usize = 2;  // 
 type DroopStates<T> =  Vec<T, DROOP_STATES>;
 /* Define a droop controller */
 pub struct DroopController<T: Num> {
@@ -181,7 +182,7 @@ impl Dynamics<f32, DROOP_STATES, DROOP_INPUTS> for DroopController<f32> {
     // * 'u' - alpha-beta current (A) as a tuple of f32 values: (ialpha, ibeta)
     fn dynamics(&self, x: &DroopStates<f32>, u: [f32; DROOP_INPUTS]) -> DroopStates<f32> {
         let (theta, p_filt, q_filt) = (x[0] * self.w_nom, x[1], x[2]);
-        let v = 1. - self.mq * (p_filt - self.p_ref);
+        let v = 1. - self.mq * (q_filt - self.q_ref);
         let v_dq = DQZ{ d: v * SQRT_2, q: 0., z: 0.};
         let i_dq = AlphaBeta::from_ab_(u[0], u[1]).to_dqz(&SinCos::<f32>::from_theta(theta));
         let (p, q) = calc_dq_power(&v_dq, &i_dq, self.n_phase);
@@ -248,7 +249,7 @@ impl InvInterface<f32, DROOP_STATES> for DroopController<f32> {  // TODO: Determ
         return self.w_nom
     }
 }
-impl InvController<f32, DROOP_STATES> for DroopController<f32> {}
+impl InvController<f32, DROOP_STATES, DROOP_INPUTS> for DroopController<f32> {}
 
 impl DroopController<f32> {
     /// Returns the p.u. voltage calculated from the Q,filt state
@@ -298,13 +299,14 @@ pub fn build_default_droop_controller(v_nom: f32, f_nom: f32) -> DroopController
 Virtual Synchronous Machine (VSM) controller
 */
 const VSM_STATES: usize = 3;
-const VSM_INPUTS: usize = 2;
+const VSM_INPUTS: usize = 4;  // [ia, ib, vg_alpha , vg_beta]
 type VsmStates<T> =  Vec<T, VSM_STATES>;
 /* Define a droop controller */
-pub struct VsmController<T: Num> {
+pub struct VsmController<'a, T: Num, const P: usize> {
     // Internal States
-    pub x: VsmStates<T>,  // [theta: angle state (p.u.), p_filt: low-pass filter active power (p.u.), q_filt: low-pass filter reactive power (p.u.)]
+    pub x: VsmStates<T>,  // [theta: angle state (p.u.), omega: angular frequency (p.u.), q_filt: low-pass filter reactive power (p.u.)]
     theta_idx: StateLimits<T, 1>, // Theta, [0], wraps within -pi to pi
+    pub pll: &'a mut dyn PhaseLockLoop<T, P>,
     
     // Other Parameters
     pub v_nom: T, // nominal voltage (V)
@@ -312,6 +314,8 @@ pub struct VsmController<T: Num> {
     pub w_c: T, // power low-pass filter cutoff frequency (rad)
     pub mp: T, // frequency droop slope (rad/s)
     pub mq: T, // voltage droop slope (V)
+    pub j: T, // inertia constant
+    pub d: T, // damping coefficient
     pub p_ref: T,  // active power reference (p.u.)
     pub q_ref: T,  // reactive power reference (p.u.)
 
@@ -319,40 +323,44 @@ pub struct VsmController<T: Num> {
     step_method: fn(&mut dyn StepDynamics<T, VSM_STATES, VSM_INPUTS>, T, [T; VSM_INPUTS])-> Vec<T, VSM_STATES>,
 }
 
-impl Dynamics<f32, VSM_STATES, VSM_INPUTS> for VsmController<f32> {
-    // Calculates the voltage dynamics of the droop controller using the given input, u.
+impl<'a, const P: usize> Dynamics<f32, VSM_STATES, VSM_INPUTS> for VsmController<'a, f32, P> {
+    // Calculates the dynamics of the virtual synchronous machine controller using the given input, u.
+    // The dynamics are based on equations 2, 4, 5, 8, and 9 from 'A Virtual Synchronous Machine implementation for distributed control of power converters in SmartGrid' by D'Arco S., Suul J.A., and Fosso O.B.
     // # Arguments
-    // * 'x' - polar voltage (p.u.) and filtered powers as a tuple of f32 values: (v, theta, p_filt, q_filt)
-    // * 'u' - alpha-beta current (A) as a tuple of f32 values: (ialpha, ibeta)
+    // * 'x' - voltage angle, omega, and filtered reactive power as a vector of f32 values: &[theta, omega, q_filt]
+    // * 'u' - alpha-beta current and alpha-beta grid-voltage as an array of f32 values: [i_alpha, i_beta, vg_alpha, vg_beta]
     fn dynamics(&self, x: &VsmStates<f32>, u: [f32; VSM_INPUTS]) -> VsmStates<f32> {
-        let (theta, p_filt, q_filt) = (x[0] * self.w_nom, x[1], x[2]);
-        let v = 1. - self.mq * (p_filt - self.p_ref);
+        let (theta, omega, q_filt) = (x[0], x[1], x[2]);
+        let v = 1. - self.mq * (q_filt - self.q_ref);
+
         let v_dq = DQZ{ d: v * SQRT_2, q: 0., z: 0.};
-        let i_dq = AlphaBeta::from_ab_(u[0], u[1]).to_dqz(&SinCos::<f32>::from_theta(theta));
+        let i_dq = AlphaBeta::from_ab_(u[0], u[1]).to_dqz(&SinCos::<f32>::from_theta(theta * self.w_nom));
         let (p, q) = calc_dq_power(&v_dq, &i_dq, self.n_phase);
 
-        // Per-unit dynamics (based on eq.13 & eq.17 from 'Control of Parallel Connected Inverters in Standalone ac Supply Systems' by Chandorkar M., Et al.)
-        let dp_filt_dt = self.w_c * (p - p_filt);
         let dq_filt_dt = self.w_c * (q - q_filt);
-        let dtheta_dt = 1. - self.mp * (p_filt - self.p_ref);
-        return na::Vector3::new(dtheta_dt, dp_filt_dt, dq_filt_dt)
+        let freq_droop = self.mp * (self.p_ref - p);
+        let pll_omega = self.pll.get_omega();
+        let domega_dt = 1. / (self.j * self.w_nom) * (1. + freq_droop - x[(1)] - self.d * (x[(1)] - pll_omega));  // TODO: Make self.j = self.j * self.w_nom?
+        return na::Vector3::new(omega, domega_dt, dq_filt_dt)
     }
 }
 
-impl StepDynamics<f32, VSM_STATES, VSM_INPUTS> for VsmController<f32> {
+impl<'a, const P: usize> StepDynamics<f32, VSM_STATES, VSM_INPUTS> for VsmController<'a, f32, P> {
     // Steps the dynamics
     // # Arguments
     // * 'u' - inputs (p.u.) as an array of T values: [input1, input2, ...]
     // # Returns the dynamics, 'dx_dt' used to step the states
     fn step(&mut self, dt: f32, u: [f32; VSM_INPUTS]) -> Vec<f32, VSM_STATES> {
-        let dx_dt = (self.step_method)(self, dt, u);
+        let u_pll = [u[2], u[3], 0.];  // [vg_alpha, vg_beta, vg_gamme]
+        self.pll.step(dt, u_pll);  // Steps the pll and stores the omega value  // TODO: Determine if we should have the user step the pll themselves outside of the vsm step function
+        let dx_dt = (self.step_method)(self, dt, u);  // Note that the vsm dynamics method takes the grid voltage inputs here and does not use them; This is to satify the input size constraints of the dynamics trait
         wrap_angle(&mut self.x, &self.theta_idx);
         return dx_dt 
     }
 }
 
 // Implement functions for getting and setting the states of the dVOC object
-impl<T: Num> XState<T, VSM_STATES, VSM_INPUTS> for VsmController<T> {  // TODO: Implement XState trait with a macro as it is the same for each object
+impl<'a, T: Num, const P: usize> XState<T, VSM_STATES, VSM_INPUTS> for VsmController<'a, T, P> {  // TODO: Implement XState trait with a macro as it is the same for each object
     fn get_x(&self) -> &Vec<T, VSM_STATES> {
         return &self.x
     }
@@ -362,7 +370,7 @@ impl<T: Num> XState<T, VSM_STATES, VSM_INPUTS> for VsmController<T> {  // TODO: 
 }
 
 // TODO: Determine if we want to make this implementation a macro as it will be the same for each GFM controller (Note that we cannot implement it on a generic type that includes all GFM controllers unless we want to access the internal parameters through functions which may be slower...)
-impl InvInterface<f32, VSM_STATES> for VsmController<f32> {  // TODO: Determine if this can remain based on generic num type T (Issue arises as dynamics of VsmController must be implemented on f32 to use scalars and constants)
+impl<'a, const P: usize> InvInterface<f32, VSM_STATES> for VsmController<'a, f32, P> {  // TODO: Determine if this can remain based on generic num type T (Issue arises as dynamics of VsmController must be implemented on f32 to use scalars and constants)
     fn get_voltage(&self) -> [f32; 2] {
         [self.compute_voltage(), self.x[(0)] * self.w_nom]
     }
@@ -393,12 +401,12 @@ impl InvInterface<f32, VSM_STATES> for VsmController<f32> {  // TODO: Determine 
         return self.w_nom
     }
 }
-impl InvController<f32, VSM_STATES> for VsmController<f32> {}
+impl<'a, const P: usize> InvController<f32, VSM_STATES, VSM_INPUTS> for VsmController<'a, f32, P> {}  // TODO: IS THIS RIGHT?
 
-impl VsmController<f32> {
+impl<'a, const P: usize> VsmController<'a, f32, P> {
     /// Returns the p.u. voltage calculated from the Q,filt state
     fn compute_pu_voltage(&self) -> f32 {
-        1. - self.mq * (self.x[(3)] - self.q_ref)
+        1. - self.mq * (self.x[(2)] - self.q_ref)
     }
     /// Returns the unit voltage calculated from the Q,filt state
     fn compute_voltage(&self) -> f32 {
@@ -406,14 +414,17 @@ impl VsmController<f32> {
     }
 }
 
-pub fn build_vsm_controller(v_nom: f32, w_nom: f32, mp: f32, mq: f32, w_c: f32, n_phase: f32) -> VsmController<f32> {
+pub fn build_vsm_controller<'a, const P: usize>(v_nom: f32, w_nom: f32, mp: f32, mq: f32, j: f32, d: f32, w_c: f32, pll: &'a mut dyn PhaseLockLoop<f32, P>, n_phase: f32) -> VsmController<'a, f32, P> {
     VsmController {
         v_nom,
         w_nom,
-        x: na::Vector3::new(0., 0., 0.),
+        x: na::Vector3::new(0., 1., 0.),
         theta_idx: StateLimits::new_theta_wrap([0], w_nom),
+        pll,
         mp,
         mq,
+        j,
+        d,
         w_c,
         p_ref: 0.,
         q_ref: 0.,
@@ -422,15 +433,19 @@ pub fn build_vsm_controller(v_nom: f32, w_nom: f32, mp: f32, mq: f32, w_c: f32, 
     }
 }
 
-pub fn build_default_vsm_controller(v_nom: f32, f_nom: f32) -> VsmController<f32> {
+pub fn build_default_vsm_controller<'a, const P: usize>(v_nom: f32, f_nom: f32, pll: &'a mut dyn PhaseLockLoop<f32, P>) -> VsmController<'a, f32, P> {
     let w_nom =  2. * PI * f_nom;
+    let h = 0.002;
     VsmController {
         v_nom,
         w_nom,
-        x: na::Vector3::new(0., 0., 0.),
+        x: na::Vector3::new(0., 1., 0.),
         theta_idx: StateLimits::new_theta_wrap([0], w_nom),
+        pll,
         mp: 0.0026,
         mq: 0.005,
+        j: 2. * h / (w_nom*w_nom),
+        d: 100. / w_nom,
         w_c: 2.*PI*30.,
         p_ref: 0.,
         q_ref: 0.,
@@ -438,3 +453,10 @@ pub fn build_default_vsm_controller(v_nom: f32, f_nom: f32) -> VsmController<f32
         step_method: rk2_step,
     }
 }
+
+// w_c_pll = 10.0;   // PLL Cutoff Frequency (~30 Hz?)
+// t_i_pll = 0.;  // tan(w_nom / 360.) / w_c_pll;
+// kp_pll = w_c_pll;
+// ki_pll = w_c_pll / t_i_pll;
+// eta_pll = 0.5;   // PLL Damping Ratio
+// pll_sat = 400.;  // PLL Saturation Limit

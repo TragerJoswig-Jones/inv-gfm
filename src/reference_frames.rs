@@ -133,6 +133,13 @@ pub trait ToFromAlphaBeta<T> {
     fn from_ab(alpha: T, beta: T, gamma: T) -> Self;
 }
 impl AlphaBeta<f32> {
+    pub fn from_ab(alpha: f32, beta: f32, gamma: f32) -> AlphaBeta<f32> {
+        AlphaBeta{
+            alpha,
+            beta,
+            gamma,
+        }
+    }
     pub fn from_ab_(alpha: f32, beta: f32) -> AlphaBeta<f32> {
         AlphaBeta{
             alpha,
