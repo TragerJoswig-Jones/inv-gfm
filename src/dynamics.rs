@@ -21,11 +21,34 @@ pub trait StepDynamics<T: Num, const X: usize, const U: usize>: XState<T, X, U> 
 }
 
 // TODO: Determine the cost of the dynamic dispatch here for StepDynamics...
+/// Steps a component's states using the given step size (s), dt, and input, u, using the 1st-order Forward Euler method and returns the calculated dynamics
+pub fn forward_euler_step<const X: usize, const U: usize>(component: &mut dyn StepDynamics<f32, X, U>, dt: f32, u: [f32; U]) -> Vec<f32, X> {
+    let x = component.get_x();
+    let dx_dt = component.dynamics(x, u);  //TODO: Replace dx_dt with reference to vector within the object?
+    let x1 = x + dx_dt * dt;  //TODO: Test if &mut x would allow for direct modification of elements of the state vector allowing us to avoid creating x1 here
+    component.set_x(x1);
+    return dx_dt
+}
+
+/// Steps a component's states using the given step size (s), dt, and input, u, using a 2nd-order Runge-Kutta method and returns the calculated dynamics
 pub fn rk2_step<const X: usize, const U: usize>(component: &mut dyn StepDynamics<f32, X, U>, dt: f32, u: [f32; U]) -> Vec<f32, X> {
     let x = component.get_x();
     let dx_dt1 = component.dynamics(x, u);  //TODO: Replace dx_dt with reference to vector within the object?
     let dx_dt2 = component.dynamics(&(x + dx_dt1 * dt), u);  
     let dx_dt = (dx_dt1 + dx_dt2) * 0.5; // TODO: Use a smaller fractional fixed-point number for dx_dt values?
+    let x1 = x + dx_dt * dt;  //TODO: Test if &mut x would allow for direct modification of elements of the state vector allowing us to avoid creating x1 here
+    component.set_x(x1);
+    return dx_dt
+}
+
+/// Steps a component's states using the given step size (s), dt, and input, u, using the 4th-order Runge-Kutta method and returns the calculated dynamics
+pub fn rk4_step<const X: usize, const U: usize>(component: &mut dyn StepDynamics<f32, X, U>, dt: f32, u: [f32; U]) -> Vec<f32, X> {
+    let x = component.get_x();
+    let dx_dt1 = component.dynamics(x, u);  //TODO: Replace dx_dt with reference to vector within the object?
+    let dx_dt2 = component.dynamics(&(x + dx_dt1 * dt * 0.5), u);  
+    let dx_dt3 = component.dynamics(&(x + dx_dt2 * dt * 0.5), u);  
+    let dx_dt4 = component.dynamics(&(x + dx_dt3 * dt), u);  
+    let dx_dt = (dx_dt1 + 2.*dx_dt2 + 2.*dx_dt3 + dx_dt4) * ONE_SIXTH; // TODO: Use a smaller fractional fixed-point number for dx_dt values?
     let x1 = x + dx_dt * dt;  //TODO: Test if &mut x would allow for direct modification of elements of the state vector allowing us to avoid creating x1 here
     component.set_x(x1);
     return dx_dt

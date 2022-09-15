@@ -9,5 +9,6 @@ pub const TWO_PI_OVER_THREE: f32 = 2. * PI / 3.;
 pub const SQRT_3_OVER_3: f32 = SQRT_3 / 3.;
 pub const ONE_THIRD: f32 = 1. / 3.;
 pub const TWO_THIRDS: f32 = 2. / 3.;
+pub const ONE_SIXTH: f32 = 1. / 6.;
 pub const ONE_HALF: f32 = 0.5;
 pub const SQRT_3_OVER_2: f32 = SQRT_3 / 2.;

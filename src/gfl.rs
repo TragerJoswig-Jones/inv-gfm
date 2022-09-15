@@ -223,7 +223,6 @@ pub struct GflController<'a, T: Num, const P: usize> {
     pub q_ref: T,  // Reactive power reference (p.u.)
 
     n_phase: T, // # of phases for power calculation (e.g. Single-Phase, 1., or Three-Phase, 3.)
-    step_method: fn(&mut dyn StepDynamics<T, GFL_STATES, GFL_INPUTS>, T, [T; GFL_INPUTS])-> Vec<T, GFL_STATES>,
 }
 
 impl<'a, const P: usize> GflController<'a, f32, P> {
@@ -251,8 +250,8 @@ impl<'a, const P: usize> GflController<'a, f32, P> {
         let v = Polar::from_dqz(u_d, u_q, 0., &sin_cos);
 
         // Step the integrator states
-        self.x[(0)] = self.x[(0)] + id_err;
-        self.x[(1)] = self.x[(1)] + iq_err;
+        self.x[(0)] = self.x[(0)] + id_err * dt;
+        self.x[(1)] = self.x[(1)] + iq_err * dt;
         
         ([v.r, v.theta], [id_err, iq_err])
     }
@@ -308,12 +307,11 @@ impl<'a, const P: usize> StepDynamics<f32, GFL_STATES, GFL_INPUTS> for GflContro
     fn step(&mut self, dt: f32, u: [f32; GFL_INPUTS]) -> Vec<f32, GFL_STATES> {
         let u_pll = [u[2], u[3], 0.];  // [vg_alpha, vg_beta, vg_gamme]
         self.pll.step(dt, u_pll);  // Steps the pll and stores the omega value
-        let dx_dt = (self.step_method)(self, dt, u);
+        let (output, dx_dt) = self.output_step(dt, u);
         saturate_states(&mut self.x, &self.sat_idx);
-        let output = self.output(u);  // Update the output parameters of the controller
         self.v = output[0];
         self.theta = output[1];
-        return dx_dt 
+        return na::Vector2::new(dx_dt[0], dx_dt[1]) 
     }
 }
 
@@ -378,6 +376,5 @@ pub fn build_gfl_controller<'a, const P: usize>(v_nom: f32, w_nom: f32, kp_d: f3
         p_ref: 0.,
         q_ref: 0.,
         n_phase,
-        step_method: rk2_step,
     }
 }
