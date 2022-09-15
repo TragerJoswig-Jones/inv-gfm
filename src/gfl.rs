@@ -9,9 +9,11 @@ use crate::*;
 const PLL_INPUTS: usize = 3;
 pub trait PhaseLockLoop<T: Num, const X: usize>: StepDynamics<f32, X, PLL_INPUTS> {
     // /// Function description
-    // fn get_voltage(&self) -> [T; 2];
+    // Returns the voltage magnitude, V (p.u.), of the associated PLL
     fn get_voltage_magnitude(&self, u: [T; PLL_INPUTS]) -> T;
+    // Returns the voltage angle, theta (rad), of the associated PLL
     fn get_voltage_angle(&self) -> T;
+    // Returns the angle frequency, omega (rad/s), of the associated PLL
     fn get_omega(&self) -> T;
 }
 
@@ -61,7 +63,7 @@ impl SrfPhaseLockedLoop<f32> {
     //     [v_mag, self.x[(0)], self.dx_dt[(0)]]  // TODO: DETERMINE IF I WANT TO STORE THESE VALUES FOR COMPUTING THE OUTPUT? Need vd here for output
     // }
 
-    pub fn output(&self, u: [f32; SRF_PLL_INPUTS]) -> [f32; SRF_PLL_OUTPUTS] {
+    pub fn output(&self, u: [f32; SRF_PLL_INPUTS]) -> [f32; SRF_PLL_OUTPUTS] {  // TODO: Make this function standard for all controllers? At least dynamical objects with outputs that are based on the input as well
         let x = self.x;
         let sin_cos = SinCos::from_theta(x[(0)]);
         let v_in_dq = DQZ::from_ab(u[0], u[1], u[2], &sin_cos);
@@ -107,10 +109,10 @@ impl PhaseLockLoop<f32, SRF_PLL_STATES> for SrfPhaseLockedLoop<f32> {
         libm::sqrtf(u[0]*u[0] + u[1]*u[1])  // Caculates voltage magnitude from alpha-beta voltages
     } 
     fn get_voltage_angle(&self) -> f32 {
-        self.x[(0)]
+        self.x[(0)] * self.w_nom
     }
     fn get_omega(&self) -> f32 {
-        self.omega
+        self.omega * self.w_nom
     }
 }
 
@@ -197,23 +199,26 @@ Frequency-locked Loop (FLL)
 Grid-Following Controller (GFL)
 */
 const GFL_STATES: usize = 2;
-const GFL_INPUTS: usize = 2;
+const GFL_INPUTS: usize = 4;
+const GFL_OUTPUTS: usize = 2;
 type GflStates<T> =  Vec<T, GFL_STATES>;
 /* Define a GFL controller */
-pub struct GflController<T: Num> {
+pub struct GflController<'a, T: Num, const P: usize> {
     // Internal States
-    pub v: T,  // voltage state (p.u.)
-    pub theta: T, // angle state (p.u.)
-    pub x: GflStates<T>, // array of states; [v, theta]
-    theta_idx: StateLimits<T, 1>, // index of theta value; 1 for GFL states
+    pub x: GflStates<T>, // array of states; [vd PI integrator, vq PI integrator]
+    sat_idx: StateLimits<T, 2>, // indeces and limit values for integrators
+    pub pll: &'a mut dyn PhaseLockLoop<T, P>,
+    pub v: T,  // previously output voltage magnitude (p.u.)
+    pub theta: T, // previouly output voltage angle (p.u.)
 
-    // Other Parameters
+    // Parameters
     pub v_nom: T, // nominal voltage (V)
-    x_nom: T, // nominal voltage (p.u.)
     pub w_nom: T, // nominal frequency (rad/s)
-    pub kv: T, // Base voltage (V)
-    xi: T,
-    c: T,  // Oscillator capacitance (F)
+    kp_d: T, // vd PI controller proportional gain
+    ki_d: T, // vd PI controller integral gain
+    kp_q: T, // vq PI controller proportional gain
+    ki_q: T, // vq PI controller integral gain
+    l: T,  // filter inductance (p.u.)
     pub p_ref: T,  // Active power reference (p.u.)
     pub q_ref: T,  // Reactive power reference (p.u.)
 
@@ -221,39 +226,99 @@ pub struct GflController<T: Num> {
     step_method: fn(&mut dyn StepDynamics<T, GFL_STATES, GFL_INPUTS>, T, [T; GFL_INPUTS])-> Vec<T, GFL_STATES>,
 }
 
-impl Dynamics<f32, GFL_STATES, GFL_INPUTS> for GflController<f32> {
-    // Calculates the voltage dynamics of the dVOC controller using the given input, u.
-    // # Arguments    
-    // * 'x' - polar voltage (p.u.) as an array of T fixed-point values: [v, theta]
-    // * 'u' - alpha-beta current (p.u.) as an array of T fixed-point values: [ialpha, ibeta]
-    fn dynamics(&self, x:  &GflStates<f32>, u: [f32; GFL_INPUTS]) -> GflStates<f32> {
-        let (v, theta) = (x[0], x[1] * self.w_nom);
-        let v_dq = DQZ{ d: v * SQRT_2, q: 0., z: 0. };  // TODO: Determine the best way to handle multiplying by a constant
-        let i_dq = AlphaBeta::from_ab_(u[0], u[1]).to_dqz(&SinCos::<f32>::from_theta(theta));
-        let (p, q) = calc_dq_power(&v_dq, &i_dq, self.n_phase);
+impl<'a, const P: usize> GflController<'a, f32, P> {
+    pub fn output_step(&mut self, dt: f32, u: [f32; GFL_INPUTS]) -> ([f32; GFL_OUTPUTS], [f32; GFL_STATES]) {
+        // TODO: REPEATED CODE FROM DYNAMICS: This function steps the integrators and returns the output, but does not fit within the dynamics framework used for other controllers 
+        // Step the PLL
+        let u_pll = [u[2], u[3], 0.];  // [vg_alpha, vg_beta, vg_gamme]
+        self.pll.step(dt, u_pll);  // Steps the pll and stores the omega value
+        // Calculate GFL output
+        let theta = self.pll.get_voltage_angle();  // Get the angle (rad) of the PLL
+        let sin_cos = SinCos::from_theta(theta);
+        let i_dq = DQZ::from_ab_(u[0], u[1], &sin_cos);
+        let vg_dq = DQZ::from_ab_(u[2], u[3], &sin_cos);
+        
+        let id_ref = self.p_ref / self.n_phase / vg_dq.d;
+        let iq_ref = self.q_ref / self.n_phase / vg_dq.d;
+        let id_err = id_ref - i_dq.d;
+        let iq_err = iq_ref - i_dq.q;
 
-        // Per unit dynamics (eq.26 from 'A Grid-compatible Virtual Oscillator Controller')
-        let _sqrt2cv = 1. / (SQRT_2 * self.c * x[0]);
-        let dv_dt = 2. * self.xi * x[0] * ((self.x_nom * self.x_nom) - (x[0] * x[0])) - _sqrt2cv * (q - self.q_ref);
-        let dtheta_dt = 1. - _sqrt2cv / x[0] / self.w_nom * (p - self.p_ref); 
-        return na::Vector2::new(dv_dt, dtheta_dt)
+		let pi_d = self.kp_d * id_err + self.ki_d * self.x[(0)];
+        let pi_q = self.kp_q * iq_err + self.ki_q * self.x[(1)];
+        
+        let u_d = pi_d + vg_dq.d + self.pll.get_omega() * self.l * iq_ref;
+        let u_q = pi_q + vg_dq.q - self.pll.get_omega() * self.l * id_ref;
+        let v = Polar::from_dqz(u_d, u_q, 0., &sin_cos);
+
+        // Step the integrator states
+        self.x[(0)] = self.x[(0)] + id_err;
+        self.x[(1)] = self.x[(1)] + iq_err;
+        
+        ([v.r, v.theta], [id_err, iq_err])
+    }
+
+    pub fn output(&self, u: [f32; GFL_INPUTS]) -> [f32; GFL_OUTPUTS] {
+        // TODO: REPEATED CODE FROM DYNAMICS: Determine a good way to not repeat this calculation from stepping the dynamics of the integrators. Note the integrators are linear and fully dependant on sampled inputs so only a first-order method is needed.
+            let theta = self.pll.get_voltage_angle();  // Get the angle (rad) of the PLL
+            let sin_cos = SinCos::from_theta(theta);
+            let i_dq = DQZ::from_ab_(u[0], u[1], &sin_cos);
+            let vg_dq = DQZ::from_ab_(u[2], u[3], &sin_cos);  // USED FOR OUTPUT
+            
+            let id_ref = self.p_ref / self.n_phase / vg_dq.d;  // USED FOR OUTPUT
+            let iq_ref = self.q_ref / self.n_phase / vg_dq.d;  // USED FOR OUTPUT
+            let id_err = id_ref - i_dq.d;  // USED FOR OUTPUT
+            let iq_err = iq_ref - i_dq.q;  // USED FOR OUTPUT
+        // END REPEATED CODE
+
+		let pi_d = self.kp_d * id_err + self.ki_d * self.x[(0)];
+        let pi_q = self.kp_q * iq_err + self.ki_q * self.x[(1)];
+        
+        let u_d = pi_d + vg_dq.d + self.pll.get_omega() * self.l * iq_ref;
+        let u_q = pi_q + vg_dq.q - self.pll.get_omega() * self.l * id_ref;
+        let v = Polar::from_dqz(u_d, u_q, 0., &sin_cos);
+        [v.r, v.theta]
     }
 }
 
-impl StepDynamics<f32, GFL_STATES, GFL_INPUTS> for GflController<f32> {
+impl<'a, const P: usize> Dynamics<f32, GFL_STATES, GFL_INPUTS> for GflController<'a, f32, P> {
+    // Calculates the voltage dynamics of the dVOC controller using the given input, u.
+    // # Arguments    
+    // * 'x' - PI integrator states as an array of T fixed-point values: [PI_i_d, PI_i_q]
+    // * 'u' - alpha-beta current (p.u.) and alpha-beta grid voltage (p.u.) as an array of T fixed-point values: [i_alpha, i_beta, vg_alpha, vg_beta]
+    fn dynamics(&self, _x:  &GflStates<f32>, u: [f32; GFL_INPUTS]) -> GflStates<f32> {
+        let theta = self.pll.get_voltage_angle();  // Get the angle (rad) of the PLL
+        let sin_cos = SinCos::from_theta(theta);
+        let i_dq = DQZ::from_ab_(u[0], u[1], &sin_cos);
+        let vg_dq = DQZ::from_ab_(u[2], u[3], &sin_cos);
+        
+        let id_ref = self.p_ref / self.n_phase / vg_dq.d;
+        let iq_ref = self.q_ref / self.n_phase / vg_dq.d;
+        let id_err = id_ref - i_dq.d;
+        let iq_err = iq_ref - i_dq.q;
+
+        return na::Vector2::new(id_err, iq_err)
+    }
+}
+
+impl<'a, const P: usize> StepDynamics<f32, GFL_STATES, GFL_INPUTS> for GflController<'a, f32, P> {
     // Steps the dynamics
     // # Arguments
     // * 'u' - inputs (p.u.) as an array of T values: [input1, input2, ...]
     // # Returns the dynamics, 'dx_dt' used to step the states
     fn step(&mut self, dt: f32, u: [f32; GFL_INPUTS]) -> Vec<f32, GFL_STATES> {
+        let u_pll = [u[2], u[3], 0.];  // [vg_alpha, vg_beta, vg_gamme]
+        self.pll.step(dt, u_pll);  // Steps the pll and stores the omega value
         let dx_dt = (self.step_method)(self, dt, u);
-        wrap_angle(&mut self.x, &self.theta_idx);
+        saturate_states(&mut self.x, &self.sat_idx);
+        let output = self.output(u);  // Update the output parameters of the controller
+        self.v = output[0];
+        self.theta = output[1];
         return dx_dt 
     }
 }
 
 // Implement functions for getting and setting the states of the dVOC object
-impl<T: Num> XState<T, GFL_STATES, GFL_INPUTS> for GflController<T> {
+impl<'a, T: Num, const P: usize> XState<T, GFL_STATES, GFL_INPUTS> for GflController<'a, T, P> {
     fn get_x(&self) -> &Vec<T, GFL_STATES> {
         return &self.x
     }
@@ -263,7 +328,7 @@ impl<T: Num> XState<T, GFL_STATES, GFL_INPUTS> for GflController<T> {
 }
 
 // TODO: Determine if we want to make this implementation a macro as it will be the same for each GFM controller (Note that we cannot implement it on a generic type that includes all GFM controllers unless we want to access the internal parameters through functions which may be slower...)
-impl InvInterface<f32, GFL_STATES> for GflController<f32> {  // TODO: Determine if this can remain based on generic num type T (Issue arises as dynamics of GflController must be implemented on f32 to use scalars and constants)
+impl<'a, const P: usize> InvInterface<f32, GFL_STATES> for GflController<'a, f32, P> {  // TODO: Determine if this can remain based on generic num type T (Issue arises as dynamics of GflController must be implemented on f32 to use scalars and constants)
     fn get_voltage(&self) -> [f32; 2] {
         return [self.x[(0)] * self.v_nom, self.x[(1)] * self.w_nom]
     }
@@ -294,20 +359,22 @@ impl InvInterface<f32, GFL_STATES> for GflController<f32> {  // TODO: Determine 
         return self.w_nom
     }
 }
-impl InvController<f32, GFL_STATES, GFL_INPUTS> for GflController<f32> {}
+impl<'a, const P: usize> InvController<f32, GFL_STATES, GFL_INPUTS> for GflController<'a, f32, P> {}
 
-pub fn build_gfl_controller(v_nom: f32, w_nom: f32, xi: f32, c: f32, n_phase: f32) -> GflController<f32> {
+pub fn build_gfl_controller<'a, const P: usize>(v_nom: f32, w_nom: f32, kp_d: f32, ki_d: f32, kp_q: f32, ki_q: f32, l: f32, pll: &'a mut dyn PhaseLockLoop<f32, P>, n_phase: f32) -> GflController<'a, f32, P> {
     GflController {
-        v_nom,
-        x_nom: 1.,
-        w_nom,
-        v: 1.,  
+        x: na::Vector2::new(0., 0.),
+        sat_idx: StateLimits{ idxs: [0, 1], mins: [-1., -1.], maxs: [1., 1.] },
+        pll,
+        v: 1.,
         theta: 0.,
-        x: na::Vector2::new(1., 0.),
-        theta_idx: StateLimits::new_theta_wrap([0], w_nom),
-        kv: v_nom,
-        xi,
-        c,
+        v_nom,
+        w_nom,
+        kp_d,
+        ki_d,
+        kp_q,
+        ki_q,
+        l,
         p_ref: 0.,
         q_ref: 0.,
         n_phase,

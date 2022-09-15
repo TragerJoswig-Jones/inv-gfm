@@ -381,19 +381,19 @@ impl<'a, const P: usize> InvInterface<f32, VSM_STATES> for VsmController<'a, f32
         self.x[(0)] = v[1];  // Sets the voltage angle
         // Note the voltage magnitude is not set as it is directly calculated from Q,filt
     }
-    // Sets the active power reference within the droop controller
+    // Sets the active power reference for the controller
     // # Arguments
     // * 'p_ref' - The desired active power reference in p.u.
     fn set_p_ref(&mut self, p_ref: f32) {
         self.p_ref = p_ref;
     }
-    // Sets the reactive power reference within the droop controller
+    // Sets the reactive power reference for the controller
     // # Arguments
     // * 'q_ref' - The desired reactive power reference in p.u.
     fn set_q_ref(&mut self, q_ref: f32) {
         self.q_ref = q_ref;
     }
-    // Returns the reference voltage for the droop controller
+    // Returns the reference voltage from the controller
     fn output(&self) -> [f32; 2] {
         return [self.compute_voltage(), self.x[(0)]]  // [v, theta]
     }

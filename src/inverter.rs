@@ -3,7 +3,7 @@ use crate::dynamics::*;
 use super::reference_frames::*;
 use super::*;
 
-/* 
+/*
 Inverter Controller Interface
 */
 /// The 'InvController' trait is used to indicate a control object that can be used within a Inverter object.
@@ -21,7 +21,7 @@ pub trait InvInterface<T: Num, const X: usize> {
     /// Returns the voltage magnitude (p.u.) and angle (rad) state values of the Inverter controller
     fn get_voltage(&self) -> [T; 2];
     fn get_pu_voltage(&self) -> [T; 2];
-    fn set_voltage(&mut self, v: [T; 2]) -> ();
+    fn set_voltage(&mut self, v: [T; 2]) -> ();  // TODO: Remove this as it is not universal to the controller to have the voltage magnitude as a state
     fn set_p_ref(&mut self, p_ref: T) -> ();
     fn set_q_ref(&mut self, q_ref: T) -> ();
     // TODO: Should we add get_w_nom and get_v_nom here as well or should this scaling be build into the functions (possibly add get_voltage_pu and set_voltage_pu) 
