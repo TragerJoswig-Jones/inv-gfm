@@ -28,7 +28,7 @@ pub fn forward_euler_step<const X: usize, const U: usize>(component: &mut dyn St
     let x1 = x + dx_dt * dt;  //TODO: Test if &mut x would allow for direct modification of elements of the state vector allowing us to avoid creating x1 here
     component.set_x(x1);
     return dx_dt
-}
+} 
 
 /// Steps a component's states using the given step size (s), dt, and input, u, using a 2nd-order Runge-Kutta method and returns the calculated dynamics
 pub fn rk2_step<const X: usize, const U: usize>(component: &mut dyn StepDynamics<f32, X, U>, dt: f32, u: [f32; U]) -> Vec<f32, X> {

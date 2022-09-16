@@ -250,7 +250,7 @@ const LCL_INPUTS: usize = 4;
 type LclStates<T> =  Vec<T, LCL_STATES>;
 pub struct LclFilter<T: Num> {
     // Parameters
-    v_nom: f32,
+    pub v_nom: f32,
     i_base: f32,
     
     // LCL Filter Components

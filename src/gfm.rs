@@ -1,8 +1,8 @@
 use crate::calculations::*;
 use crate::constants::*;
 use crate::dynamics::*;
-use crate::gfl::*;
 use crate::inverter::*;
+use crate::pll::*;
 use crate::reference_frames::*;
 use crate::*;
 
@@ -339,7 +339,7 @@ impl<'a, const P: usize> Dynamics<f32, VSM_STATES, VSM_INPUTS> for VsmController
 
         let dq_filt_dt = self.w_c * (q - q_filt);
         let freq_droop = self.mp * (self.p_ref - p);
-        let pll_omega = self.pll.get_omega();
+        let pll_omega = self.pll.get_pu_omega();
         let domega_dt = 1. / (self.j * self.w_nom) * (1. + freq_droop - x[(1)] - self.d * (x[(1)] - pll_omega));  // TODO: Make self.j = self.j * self.w_nom?
         return na::Vector3::new(omega, domega_dt, dq_filt_dt)
     }
@@ -393,7 +393,7 @@ impl<'a, const P: usize> InvInterface<f32, VSM_STATES> for VsmController<'a, f32
     fn set_q_ref(&mut self, q_ref: f32) {
         self.q_ref = q_ref;
     }
-    // Returns the reference voltage from the controller
+    // Returns the reference voltage from the VSM controller
     fn output(&self) -> [f32; 2] {
         return [self.compute_voltage(), self.x[(0)]]  // [v, theta]
     }
