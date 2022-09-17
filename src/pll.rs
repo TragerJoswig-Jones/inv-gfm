@@ -3,7 +3,6 @@ use crate::dynamics::*;
 use crate::reference_frames::*;
 use crate::*;
 
-// TODO: Make the input to the PLL in the alpha-beta reference frame so it can be generalized to single-phase or three-phase inverters?
 const PLL_INPUTS: usize = 3;
 pub trait PhaseLockLoop<T: Num, const X: usize>: StepDynamics<f32, X, PLL_INPUTS> {
     // /// Function description

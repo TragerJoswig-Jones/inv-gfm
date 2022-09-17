@@ -43,7 +43,7 @@ pub trait Line<T: Num, const X: usize>: StepDynamics<f32, X, 4> +
     fn switch_is_closed(&self) -> bool;
 }
 
-/* 
+/*
 Define an RL Branch object 
 */
 const RL_STATES: usize = 2;
@@ -399,6 +399,13 @@ pub struct AcVoltSrc<T: Num> {
     step_method: fn(&mut dyn StepDynamics<T, ACVS_STATES, ACVS_INPUTS>, T, [T; ACVS_INPUTS])-> Vec<T, ACVS_STATES>,
 }
 
+impl AcVoltSrc<f32> {
+    pub fn wrap_theta(&mut self) {
+        wrap_angle(&mut self.x, &self.theta_idx)
+    }
+}
+    
+
 impl Dynamics<f32, ACVS_STATES, ACVS_INPUTS> for AcVoltSrc<f32> {
     // Calculates the p.u. voltage dynamics of the dVOC controller using the given input, u.
     // # Arguments    
@@ -443,7 +450,6 @@ pub fn build_ac_volt_src(v_nom: f32, w_nom: f32) -> AcVoltSrc<f32> {
         step_method: rk2_step,
     }
 }
-
 
 /* 
 Define a LineToBus object 
@@ -545,6 +551,153 @@ pub fn build_line_to_bus<'a, const X: usize, const L: usize>(line: &'a mut dyn L
         bus, 
         x,
         theta_idx: StateLimits::new_theta_wrap([1], w_nom),
+        step_method: rk2_step,
+    }
+}
+
+/* Single-Phase Implementations */
+
+const LINE_1PH_INPUTS: usize = 2;
+/// The 'Line' trait is used to indicate an object that has a current state with dynamics.
+pub trait Line1Ph<T: Num, const X: usize>: StepDynamics<f32, X, 2> + 
+                                        NoInputStep<f32, X, 2> + 
+                                        XState<f32, X, 2> +
+                                        Dynamics<f32, X, 2>
+{
+    /// Returns the current state values of the current edge object
+    fn get_fr_current(&self) -> T;
+    fn get_to_current(&self) -> T;
+    fn get_fr_pu_current(&self) -> T;
+    fn get_to_pu_current(&self) -> T;
+    fn set_fr_current(&mut self, i: T) -> ();
+    fn set_to_current(&mut self, i: T) -> ();
+    // Opens and closes line switch
+    fn open_switch(&mut self);
+    fn close_switch(&mut self);
+    fn switch_is_closed(&self) -> bool;
+}
+
+/*
+Single-Phase RL Branch object 
+*/
+const RL_1PH_STATES: usize = 1;
+const RL_1PH_INPUTS: usize = 2;
+type Rl1PhStates<T> =  Vec<T, RL_1PH_STATES>;
+pub struct Rl1PhBranch<T: Num> {
+    // RL Filter Parameters
+    pub i_base: T, // base current (A)
+    pub w_nom: T, // nominal frequency (rad)
+    rf: T,  // Line resistance (p.u.)
+    lf: T,  // Line inductance (p.u.)
+
+    switch_closed: bool, // to-side switch state
+
+    // Internal States
+    pub x: Rl1PhStates<T>, // [i]
+
+    step_method: fn(&mut dyn StepDynamics<T, RL_1PH_STATES, RL_1PH_INPUTS>, T, [T; RL_1PH_INPUTS])-> Vec<T, RL_1PH_STATES>,
+}
+impl<T: Num> Rl1PhBranch<T> {
+    pub fn get_current(&self) -> T {
+        self.i_base * self.x[(0)]
+    }
+    pub fn get_pu_current(&self) -> T {
+        self.x[(0)]
+    }
+    pub fn set_current(&mut self, i: T) -> () {
+        self.x[(0)] = i / self.i_base;
+    }
+    pub fn set_pu_current(&mut self, i: T) -> () {
+        self.x[(0)] = i;
+    }
+}
+
+impl Dynamics<f32, RL_1PH_STATES, RL_1PH_INPUTS> for Rl1PhBranch<f32> {
+    // Calculates the p.u. current dynamics for the RL branch using the given input, u.
+    // # Arguments    
+    // * 'x' - internal states as an array of T values: (i_alpha, i_beta)
+    // * 'u' - input voltages as an array of T values: (v1, theta1, v2, theta2)
+    fn dynamics(&self, x: &Rl1PhStates<f32>, u: [f32; RL_1PH_INPUTS]) -> Rl1PhStates<f32> {
+        let v1 = u[0];
+        let v2: f32;
+        if !self.switch_closed {
+            v2 = v1;
+        } else {
+            v2 = u[1];
+        }
+        let i = x[0];
+        
+        // calculate inductor dynamics
+        let di_dt = (v1 - v2 - self.rf * i) / self.lf;
+
+        na::Vector1::new(di_dt)
+    }
+}
+
+impl StepDynamics<f32, RL_1PH_STATES, RL_1PH_INPUTS> for Rl1PhBranch<f32> {
+    // Steps the dynamics
+    // # Arguments
+    // * 'u' - inputs (p.u.) as an array of T values: [input1, input2, ...]
+    // # Returns the dynamics, 'dx_dt' used to step the states
+    fn step(&mut self, dt: f32, u: [f32; RL_1PH_INPUTS]) -> Vec<f32, RL_1PH_STATES> {
+        let dx_dt = (self.step_method)(self, dt, u);
+        return dx_dt 
+    }
+}
+
+// Implement functions for getting and setting the states of the RlBranch object
+impl<T: Num> XState<T, RL_1PH_STATES, RL_1PH_INPUTS> for Rl1PhBranch<T> {
+    fn get_x(&self) -> &Vec<T, RL_1PH_STATES> {
+        return &self.x
+    }
+    fn set_x(&mut self, x: Vec<T, RL_1PH_STATES>) {
+        self.x = x;
+    }
+}
+
+// Implement Line trait for RLBranch
+impl Line1Ph<f32, RL_1PH_STATES> for Rl1PhBranch<f32> {
+    fn get_fr_current(&self) -> f32 {
+        self.get_current()
+    }
+    fn get_fr_pu_current(&self) -> f32 {
+        self.get_pu_current()
+    }
+    fn get_to_current(&self) -> f32 {
+        self.get_current()
+    }
+    fn get_to_pu_current(&self) -> f32 {
+        self.get_pu_current()
+    }
+    fn set_fr_current(&mut self, i: f32) -> () {
+        self.set_current(i)
+    }
+    fn set_to_current(&mut self, i: f32) -> () {
+        self.set_current(i)
+    }
+    fn open_switch(&mut self) {
+        self.switch_closed = false;
+    }
+    fn close_switch(&mut self) {
+        self.switch_closed = true;
+    }
+    fn switch_is_closed(&self) -> bool {
+        self.switch_closed
+    }
+}
+
+pub fn build_rl_1ph_branch(i_base: f32, w_nom: f32, rf: f32, lf: f32) -> Rl1PhBranch<f32> {
+    Rl1PhBranch {
+        // RL Filter Parameters
+        i_base,
+        w_nom,
+        rf,
+        lf,
+
+        switch_closed: true,
+
+        // Internal States
+        x: na::Vector1::new(0.),
         step_method: rk2_step,
     }
 }

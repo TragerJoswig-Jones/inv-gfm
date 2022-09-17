@@ -13,6 +13,7 @@ pub mod dynamics;
 pub mod gfm;
 pub mod gfl;
 pub mod inverter;
+pub mod osg;
 pub mod pll;
 pub mod reference_frames;
 pub mod simulations;
