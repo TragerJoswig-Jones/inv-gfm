@@ -65,7 +65,7 @@ impl<'a, const X: usize, const U: usize> Presync<f32, X, U> for PresyncInvContro
         else {
             let mut u_sync = u;  // TODO: Determine a better way to step during presynch for the controllers with PLLs. Here I am zeroing out the measured currents. This is a somewhat ugly approach though...
             u_sync[0] = 0.; u_sync[1] = 0.;
-            return self.presync_step(dt, u, vg);
+            return self.presync_step(dt, u_sync, vg);
         }
     }
     fn presync_step(&mut self, dt: f32, u: [f32; U], vg: [f32; 2]) -> Vec<f32, X> {
@@ -184,9 +184,10 @@ impl DlvController<f32> {
     //                                       id_g; grid-side direct-axis current, iq_g; grid-side quad-axis current].
     pub fn output(&self, u: [f32; DLVC_INPUTS]) -> [f32; DLVC_OUTPUTS] {
         let x = &self.x;
+        let (v_ref, omega, vc_d, vc_q, if_d, if_q, ig_d, ig_q) = (u[0], u[1], u[2], u[3], u[4], u[5], u[6], u[7]);
         let v_virtual_impedance = [0., 0.];  // TODO: Determine how to implement the virtual impedance / grid-side compensation and get this value here
-        let vd_err = u[0] - u[2] - v_virtual_impedance[0];
-        let vq_err = - u[3] - v_virtual_impedance[1];
+        let vd_err = v_ref - vc_d - v_virtual_impedance[0];
+        let vq_err = - vc_q - v_virtual_impedance[1];
 
         let mut id_ref = self.kp_v * vd_err + self.ki_v * x[(0)];  // TODO: Missing FF componenet here using LCL cap and capacitor dq voltage?
         let mut iq_ref = self.kp_v * vq_err + self.ki_v * x[(1)];
@@ -194,38 +195,39 @@ impl DlvController<f32> {
         id_ref = id_ref.clamp(self.i_min, self.i_max);
         iq_ref = iq_ref.clamp(self.i_min, self.i_max);
 
-        let id_err = id_ref - u[4];
-        let iq_err = iq_ref - u[5];
+        let id_err = id_ref - if_d; 
+        let iq_err = iq_ref - if_q;
 
         let vd_ref = self.kp_i * id_err + self.ki_i * x[(2)];
         let vq_ref = self.kp_i * iq_err + self.ki_i * x[(3)];
 
-        let ud = u[2] + vd_ref + u[1] * self.lf  * iq_ref;
-        let uq = u[3] + vq_ref - u[1] * self.lf  * id_ref;
+        let ud = vc_d + vd_ref + omega * self.lf  * iq_ref;
+        let uq = vc_q + vq_ref - omega * self.lf  * id_ref;
 
         return [ud, uq];
     }
 
     pub fn step_output(&mut self, dt: f32, u: [f32; DLVC_INPUTS]) -> [f32; DLVC_OUTPUTS] {
         let x = self.get_x();
+        let (v_ref, omega, vc_d, vc_q, if_d, if_q, ig_d, ig_q) = (u[0], u[1], u[2], u[3], u[4], u[5], u[6], u[7]);
         let v_virtual_impedance = [0., 0.];  // TODO: Determine how to implement the virtual impedance / grid-side compensation and get this value here
-        let vd_err = u[0] - u[2] - v_virtual_impedance[0];
-        let vq_err = - u[3] - v_virtual_impedance[1];
+        let vd_err = v_ref - vc_d - v_virtual_impedance[0];
+        let vq_err = - vc_q - v_virtual_impedance[1];
 
         let mut id_ref = self.kp_v * vd_err + self.ki_v * x[(0)];  // TODO: Missing FF componenet here using LCL cap and capacitor dq voltage?
         let mut iq_ref = self.kp_v * vq_err + self.ki_v * x[(1)];
         
-        id_ref = id_ref.clamp(self.i_min, self.i_max);
-        iq_ref = iq_ref.clamp(self.i_min, self.i_max);
+        //id_ref = id_ref.clamp(self.i_min, self.i_max);
+        //iq_ref = iq_ref.clamp(self.i_min, self.i_max);
 
-        let id_err = id_ref - u[4];
-        let iq_err = iq_ref - u[5];
+        let id_err = id_ref - if_d; 
+        let iq_err = iq_ref - if_q;
 
         let vd_ref = self.kp_i * id_err + self.ki_i * x[(2)];
         let vq_ref = self.kp_i * iq_err + self.ki_i * x[(3)];
 
-        let ud = u[2] + vd_ref + u[1] * self.lf  * iq_ref;
-        let uq = u[3] + vq_ref - u[1] * self.lf  * id_ref;
+        let ud = vc_d + vd_ref + omega * self.lf  * iq_ref;
+        let uq = vc_q + vq_ref - omega * self.lf  * id_ref;
 
         let dx_dt = na::Vector4::new(vd_err, vq_err, id_err, iq_err);
         self.set_x(x + dx_dt * dt);
@@ -244,9 +246,10 @@ impl Dynamics<f32, DLVC_STATES, DLVC_INPUTS> for DlvController<f32> {  // TODO: 
     //                                       id_f; filter inductor direct-axis current, iq_f; filter inductor quad-axis current,
     //                                       id_g; grid-side direct-axis current, iq_g; grid-side quad-axis current].
     fn dynamics(&self, x: &DlvcStates<f32>, u: [f32; DLVC_INPUTS]) -> DlvcStates<f32> {
+        let (v_ref, omega, vc_d, vc_q, if_d, if_q, ig_d, ig_q) = (u[0], u[1], u[2], u[3], u[4], u[5], u[6], u[7]);
         let v_virtual_impedance = [0., 0.];  // TODO: Determine how to implement the virtual impedance / grid-side compensation and get this value here
-        let vd_err = u[0] - u[2] - v_virtual_impedance[0];
-        let vq_err = - u[3] - v_virtual_impedance[1];
+        let vd_err = v_ref - vc_d - v_virtual_impedance[0];
+        let vq_err = - vc_q - v_virtual_impedance[1];
 
         let mut id_ref = self.kp_v * vd_err + self.ki_v * x[(0)];  // TODO: Missing FF componenet here using LCL cap and capacitor dq voltage?
         let mut iq_ref = self.kp_v * vq_err + self.ki_v * x[(1)];
@@ -254,8 +257,8 @@ impl Dynamics<f32, DLVC_STATES, DLVC_INPUTS> for DlvController<f32> {  // TODO: 
         id_ref = id_ref.clamp(self.i_min, self.i_max);
         iq_ref = iq_ref.clamp(self.i_min, self.i_max);
 
-        let id_err = id_ref - u[4]; 
-        let iq_err = iq_ref - u[5];
+        let id_err = id_ref - if_d; 
+        let iq_err = iq_ref - if_q;
         return na::Vector4::new(vd_err, vq_err, id_err, iq_err)  // TODO: Should the integrator track x_err or ki * x_err?
     }
 }
