@@ -1,22 +1,14 @@
-use super::dvoc::{build_dvoc_controller, build_default_dvoc_controller};
-
-#[test]
-fn it_works() {
-    let result = 2 + 2;
-    assert_eq!(result, 4);
-}
+use crate::gfm::*;
 
 #[test]
 fn test_dvoc_params() {
     let v_nom: f32 = 80.;
     let w_nom: f32 = 60.;
-    let s_rated: f32 = 500.;
     let xi: f32 = 15.;
     let c: f32 = 0.2679;
-    let dvoc = build_dvoc_controller(v_nom, w_nom, s_rated, xi, c);
+    let dvoc = build_dvoc_controller(v_nom, w_nom, xi, c, 3.);
     assert_eq!(dvoc.v_nom, v_nom);
     assert_eq!(dvoc.w_nom, w_nom);
-    assert_eq!(dvoc.s_rated, s_rated);
 }
 
 #[test]
