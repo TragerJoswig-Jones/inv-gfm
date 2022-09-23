@@ -9,7 +9,7 @@ use crate::*;
 Voltage Node Interface
 */
 /// The 'NodeInterface' trait is used to indicate an object that has a voltage state with dynamics.
-pub trait NodeInterface<T: Num, const X: usize>: RK2Step<f32, X, 2> + 
+pub trait NodeInterface<T: Num, const X: usize>: StepDynamics<f32, X, 2> + 
                                                  NoInputStep<f32, X, 2> + 
                                                  XState<f32, X, 2> 
 {
@@ -23,7 +23,7 @@ pub trait NodeInterface<T: Num, const X: usize>: RK2Step<f32, X, 2> +
 /* 
 Current Edge Interface
 */
-const LINE_INPUTS: usize = 4;
+// const LINE_INPUTS: usize = 4;
 /// The 'Line' trait is used to indicate an object that has a current state with dynamics.
 pub trait Line<T: Num, const X: usize>: StepDynamics<f32, X, 4> + 
                                         NoInputStep<f32, X, 4> + 
@@ -557,7 +557,7 @@ pub fn build_line_to_bus<'a, const X: usize, const L: usize>(line: &'a mut dyn L
 
 /* Single-Phase Implementations */
 
-const LINE_1PH_INPUTS: usize = 2;
+// const LINE_1PH_INPUTS: usize = 2;
 /// The 'Line' trait is used to indicate an object that has a current state with dynamics.
 pub trait Line1Ph<T: Num, const X: usize>: StepDynamics<f32, X, 2> + 
                                         NoInputStep<f32, X, 2> + 

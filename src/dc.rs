@@ -9,6 +9,7 @@ const PI_STATES: usize = 1;
 const PI_INPUTS: usize = 1;
 const PI_OUTPUTS: usize = 1;
 type PiControllerStates<T> =  Vec<T, PI_STATES>;
+// Defines a Proportional-Integral (PI) controller with a single state
 pub struct PiController<T: Num> {
     // parameters
     pub kp: T, // proptional scalar
@@ -57,7 +58,7 @@ impl PiController<f32> {
 }
 
 impl Dynamics<f32, PI_STATES, PI_INPUTS> for PiController<f32> {  // NOTE: Dynamics are not used for this objects step function, but are required by the StepDynamics trait.
-    fn dynamics(&self, x:  &PiControllerStates<f32>, u: [f32; PI_INPUTS]) -> PiControllerStates<f32> {
+    fn dynamics(&self, _x:  &PiControllerStates<f32>, u: [f32; PI_INPUTS]) -> PiControllerStates<f32> {
         let u_err = u[0] - self.u_ref;
         na::Vector1::new(u_err)
     } 
@@ -92,10 +93,11 @@ const CAP_STATES: usize = 1;
 const CAP_INPUTS: usize = 1;
 const CAP_OUTPUTS: usize = 1;
 type CapStates<T> =  Vec<T, CAP_STATES>;
+// Defines a capacitor object
 pub struct Capacitor<T: Num> {
     // Capacitor Parameters
     pub v_nom: T, // nominal frequency (rad)
-    pub rc: T,  // leakage resistance (p.u.)
+    pub rc: T,  // equivalent series resistance (p.u.)
     pub c: T,  // capacitance (p.u.)
     
     // Internal States
@@ -150,6 +152,7 @@ impl Capacitor<f32> {
         }
     }
 
+    /// Returns the voltage of the capacitor
     pub fn get_voltage(&self, u: [f32; CAP_INPUTS]) -> [f32; CAP_OUTPUTS]{
         [self.x[(0)] + self.rc * u[0]]
     }

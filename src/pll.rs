@@ -3,9 +3,8 @@ use crate::dynamics::*;
 use crate::reference_frames::*;
 use crate::*;
 
-const PLL_INPUTS: usize = 3;
+const PLL_INPUTS: usize = 2;
 pub trait PhaseLockLoop<T: Num, const X: usize>: StepDynamics<f32, X, PLL_INPUTS> {
-    // /// Function description
     /// Returns the voltage magnitude, V , of the associated PLL
     fn get_voltage_magnitude(&self, u: [T; PLL_INPUTS]) -> T;
     /// Returns the voltage angle, theta (p.u.), of the associated PLL
@@ -24,9 +23,10 @@ pub trait PhaseLockLoop<T: Num, const X: usize>: StepDynamics<f32, X, PLL_INPUTS
 Synchronous Reference Frame (SRF) Phase-locked Loop (PLL)
 */
 pub const SRF_PLL_STATES: usize = 2;
-const SRF_PLL_INPUTS: usize = 3;
+const SRF_PLL_INPUTS: usize = 2;
 const SRF_PLL_OUTPUTS: usize = 3;
 type SrfPllStates<T> =  Vec<T, SRF_PLL_STATES>;
+/// A Synchronous Refrence Frame Phase-Lock Loop (SRF-PLL) 
 pub struct SrfPhaseLockedLoop<T: Num> {
     // parameters
     pub w_nom: T, // nominal frequency
@@ -43,7 +43,15 @@ pub struct SrfPhaseLockedLoop<T: Num> {
 }
 
 impl SrfPhaseLockedLoop<f32> {  
-    pub fn new(w_nom: f32, kp: f32, ki: f32) -> Self {  // TODO: Determine if we want to implement a constructor like this for each struct?
+    /// Constructs a synchronous reference frame phase-lock loop from the given controller parameters
+    /// # Arguments
+    /// * 'w_nom' - nominal frequency (rad/s)
+    /// * 'kp' - speed gain
+    /// * 'ki' - virtual oscillator capacitance (C)
+    /// * 'step_method' - the method to be used to step the controller (e.g. forward_euler_step, rk2_step)
+    pub fn new(w_nom: f32, kp: f32, ki: f32, 
+               step_method: fn(&mut dyn StepDynamics<f32, SRF_PLL_STATES, SRF_PLL_INPUTS>, f32, [f32; SRF_PLL_INPUTS])-> Vec<f32, SRF_PLL_STATES>
+              ) -> Self {
         SrfPhaseLockedLoop { 
             w_nom, 
             kp, 
@@ -52,21 +60,14 @@ impl SrfPhaseLockedLoop<f32> {
             dx_dt: na::Vector2::new(1., 0.),
             omega: 1.,
             theta_idx: StateLimits::new_theta_wrap([0], w_nom),
-            step_method: rk2_step,
+            step_method,
         }
     }
 
-    // // Steps the PLL dynamics and stores dx_dt
-    // pub fn step_dx_dt(&mut self, dt: f32, u: [f32; SRF_PLL_INPUTS]) -> () {  // TODO: DETERMINE IF I WANT TO STORE THIS VALUE FOR COMPUTING THE OUTPUT?
-    //     self.dx_dt = self.step(dt, u);
-    // }
-
-    // pub fn output_from_dx_dt(&self) -> [f32; SRF_PLL_OUTPUTS] {
-    //     let v_mag = libm::fabsf(vd);
-    //     [v_mag, self.x[(0)], self.dx_dt[(0)]]  // TODO: DETERMINE IF I WANT TO STORE THESE VALUES FOR COMPUTING THE OUTPUT? Need vd here for output
-    // }
-
-    pub fn output(&self, u: [f32; SRF_PLL_INPUTS]) -> [f32; SRF_PLL_OUTPUTS] {  // TODO: Make this function standard for all controllers? At least dynamical objects with outputs that are based on the input as well
+    /// Calculates the output of the PLL using the given input, u.
+    /// # Arguments    
+    /// * 'u' - alpha-beta reference values (p.u.) as an array: [u_alpha, u_beta]
+    pub fn output(&self, u: [f32; SRF_PLL_INPUTS]) -> [f32; SRF_PLL_OUTPUTS] { 
         let x = self.x;
         let sin_cos = SinCos::from_theta(x[(0)]);
         let v_in_dq = DQZ::from_ab(u[0], u[1], u[2], &sin_cos);
@@ -77,19 +78,23 @@ impl SrfPhaseLockedLoop<f32> {
 }
 
 impl Dynamics<f32, SRF_PLL_STATES, SRF_PLL_INPUTS> for SrfPhaseLockedLoop<f32> {
+    /// Calculates the dynamics of the PLL using the given input, u.
+    /// # Arguments    
+    /// * 'u' - alpha-beta reference values (p.u.) as an array: [u_alpha, u_beta]
     fn dynamics(&self, x:  &SrfPllStates<f32>, u: [f32; SRF_PLL_INPUTS]) ->  SrfPllStates<f32> {
         let sin_cos = SinCos::from_theta(x[(0)] * self.w_nom);
-        let v_in_dq = DQZ::from_ab(u[0], u[1], u[2], &sin_cos);  // TODO: Possibly make, v_in_dq, the input u to reduce calculations for the output?
+        let v_in_dq = DQZ::from_ab_(u[0], u[1], &sin_cos);  // TODO: Possibly make, v_in_dq, the input u to reduce calculations for the output?
         let omega = 1. + self.kp * v_in_dq.q + self.ki * x[(1)];
         return na::Vector2::new(omega, v_in_dq.q);
     }
 }
 
 impl StepDynamics<f32, SRF_PLL_STATES, SRF_PLL_INPUTS> for SrfPhaseLockedLoop<f32> {
-    // Steps the dynamics
-    // # Arguments
-    // * 'u' - inputs (p.u.) as an array of T values: [input1, input2, ...]
-    // # Returns the dynamics, 'dx_dt' used to step the states
+    /// Steps the dynamics of the SRF-PLL
+    /// # Arguments
+    /// * 'dt' - step time period (s)
+    /// * 'u' - inputs (p.u.) as an array of T values: [x_alpha, x_beta]
+    /// Returns the dynamics, 'dx_dt' used to step the states
     fn step(&mut self, dt: f32, u: [f32; SRF_PLL_INPUTS]) -> Vec<f32, SRF_PLL_STATES> {
         let dx_dt = (self.step_method)(self, dt, u);
         self.omega = dx_dt[0];
@@ -154,7 +159,7 @@ impl DsrfPhaseLockedLoop<f32> {
     //     self.dx_dt = self.step(dt, u);
     // }
 
-    pub fn output(&self, u: [f32; DSRF_PLL_INPUTS]) -> [f32; DSRF_PLL_OUTPUTS] {  // TODO: Remove inputs here?
+    pub fn output(&self, _u: [f32; DSRF_PLL_INPUTS]) -> [f32; DSRF_PLL_OUTPUTS] {  // TODO: Remove inputs here?
         let x = self.x;
         let omega = self.w_nom + self.kp * x[(2)] + self.ki * x[(5)];
         [x[(1)], x[(0)], omega]  // [v_mag, theta, omega]
@@ -204,3 +209,4 @@ impl<T: Num> XState<T, DSRF_PLL_STATES, DSRF_PLL_INPUTS> for DsrfPhaseLockedLoop
 /* 
 Frequency-locked Loop (FLL)
 */
+// TODO: Implement a FLL

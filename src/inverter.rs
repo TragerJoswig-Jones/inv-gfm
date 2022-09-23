@@ -6,7 +6,7 @@ use super::*;
 /*
 Inverter Controller Interface
 */
-/// The 'InvController' trait is used to indicate a control object that can be used within a Inverter object.
+/// The 'InvController' trait is used to indicate a control object that can be used within a Presyncrhonization object.
 /// -   This trait requires the control object to have already implemented functions to set and get the 
 ///     state and step the dynamics of the control object with and without input.
 /// -   Note this trait is seperate from the InvInterface so that the Inverter can also be implemented 
@@ -18,22 +18,39 @@ pub trait InvController<T: Num, const X: usize, const U: usize>: StepDynamics<f3
 {}
 
 pub trait InvInterface<T: Num, const X: usize> {
-    /// Returns the voltage magnitude (p.u.) and angle (rad) state values of the Inverter controller
+    /// Returns the voltage magnitude (V) and angle (rad) state values of the Inverter controller
     fn get_voltage(&self) -> [T; 2];
+
+    /// Returns the voltage magnitude (p.u.) and angle (p.u.) state values of the Inverter controller
     fn get_pu_voltage(&self) -> [T; 2];
+
+    /// Sets the voltage magnitude and angle of the controller from the given vector, v
+    /// # Arguments
+    /// * 'v' - A vector containing the voltage magnitude and angle in p.u.: [v, theta]
     fn set_voltage(&mut self, v: [T; 2]) -> ();  // TODO: Remove this as it is not universal to the controller to have the voltage magnitude as a state
+
+    /// Sets the active power reference within the controller
+    /// # Arguments
+    /// * 'p_ref' - The desired active power reference in p.u.
     fn set_p_ref(&mut self, p_ref: T) -> ();
+
+    /// Sets the reactive power reference within the controller
+    /// # Arguments
+    /// * 'q_ref' - The desired reactive power reference in p.u.
     fn set_q_ref(&mut self, q_ref: T) -> ();
-    // TODO: Should we add get_w_nom and get_v_nom here as well or should this scaling be build into the functions (possibly add get_voltage_pu and set_voltage_pu) 
-    /// Get the voltage reference from the Inverter controller
+
+    /// Returns the reference voltage for the inverter controller
     fn output(&self) -> [T; 2];
+
+    /// Returns the nominal frequency of the controller
     fn get_w_nom(&self) -> T;
 }
 
 /* 
 Inverter Controller Presynchronization
 */
-/// Defines a 'PresyncInvController' structure that wraps an 'InvController' object and adds presynchronization capabilities
+/// Defines a 'PresyncInvController' structure that wraps an 'InvController' object and adds presynchronization capabilities.
+/// This can be added to any 'InvController' objects, but was designed to be used with grid-forming controllers (e.g. dVOC, droop, VSM)
 pub struct PresyncInvController<'a, T: Num, const X: usize, const U: usize> {
     synced: bool,  // If false, then presynchronization dynamics will be used
     gamma: T,  // A scalar used for presynchronization dynamics
@@ -44,12 +61,13 @@ pub struct PresyncInvController<'a, T: Num, const X: usize, const U: usize> {
 /// The 'Presync' trait allows a Inverter controller to step its dynamics such that it can synchronize to an AC voltage
 pub trait Presync<T: Num, const X: usize, const U: usize> {
     /// Steps the Inverter controller by timestep 'dt' using dynamics according to 'synced' given the inputs 
-    /// 'u' (An array of alpha beta currents in p.u.: [i.alpha, i.beta]) and 'vg' (An array of alpha beta voltages in p.u.: [vg.alpha, vg.beta]).
+    /// * 'u' - an array of alpha beta currents in p.u.: (i_alpha, i_beta) 
+    /// * 'vg' - an array of alpha beta voltages in p.u.: (vg_alpha, vg_beta).
     fn inv_step(&mut self, dt: T, u: [T; U], vg: [T; 2]) -> Vec<f32, X>;
     /// Steps the Inverter controller by timestep 'dt' using dynamics such that it synchronizes to the input voltage,
-    /// 'vg' (An array of alpha beta voltages in p.u.: [vg.alpha, vg.beta]).
+    /// * 'vg' - An array of alpha beta voltages in p.u.: (vg_alpha, vg_beta).
     fn presync_step(&mut self, dt: T, u: [T; U], vg: [T; 2]) -> Vec<f32, X>;
-    /// Sets the synced parameter of the inverter to true
+    /// Sets the synced parameter of the inverter to true and flips the sign of the voltage vector's magnitude if it is negative
     fn disable_presync(&mut self) -> ();
     /// Sets the synced parameter of the inverter to false
     fn enable_presync(&mut self) -> ();
@@ -108,8 +126,6 @@ impl<'a, const X: usize, const U: usize> Presync<f32, X, U> for PresyncInvContro
 }
 
 // Implement InvInterface for Inverter object such that users can make calls to functions directly from the Inverter object
-// TODO: With this should we make the ctrl parameter private???
-// TODO: Crate a seperate trait 'NodeInterface' with voltage calls and make it a requirement of GfmInterface (Implement NodeInterface on ACVoltSrc)
 impl<'a, const X: usize, const U: usize> InvInterface<f32, X> for PresyncInvController<'a, f32, X, U> {
     fn get_voltage(&self) -> [f32; 2] {
         self.ctrl.get_voltage()
@@ -134,38 +150,35 @@ impl<'a, const X: usize, const U: usize> InvInterface<f32, X> for PresyncInvCont
     }
 }
 
+/// Wraps an inverter controller object in a PresyncInvController object adding presynchronization capabilities to the controller
 pub fn add_presynch<'a, const X: usize, const U: usize>(ctrl: &'a mut dyn InvController<f32, X, U>, gamma: f32) -> PresyncInvController<'a, f32, X, U> {
     PresyncInvController { ctrl, synced: false, gamma, sync_tol: 1e-3 }
 }
 
-
 /* 
 Double-loop Voltage Controller (DVLC)
 */
-const DLVC_STATES: usize = 4;
-// [vd int, vq int, id int, iq int]
-const DLVC_INPUTS: usize = 8;
+const DLVC_STATES: usize = 4;  // [vd int, vq int, id int, iq int]
+const DLVC_INPUTS: usize = 8;  
 // [E; ref voltage magnitude (p.u.), omega; ref voltage frequency (rad), 
 //  Vd_c; cap direct-axis voltage; , Vq_c; cap quad-axis voltage, 
 //  id_f; filter inductor direct-axis current, iq_f; filter inductor quad-axis current,
 //  id_g; grid-side direct-axis current, iq_g; grid-side quad-axis current]
-const DLVC_OUTPUTS: usize = 2;
-// [ud, uq]
+const DLVC_OUTPUTS: usize = 2;  // [ud, uq]
 type DlvcStates<T> =  Vec<T, DLVC_STATES>;
 
 /// Defines a double-loop voltage controller based on Fig.4b from ('Control of Power Converters in AC Microgrids' by Rocabert J., Et. al)
 pub struct DlvController<T: Num> {
     // Parameters
-    pub x_nom: T, // nominal unit value
     pub kp_v: T, // voltage proportional gain
     pub ki_v: T, // voltage integral gain
     pub kp_i: T, // current proportional gain
     pub ki_i: T, // current integral gain
-    pub lf: T, // filter-side inductance value
-    pub cf: T, // filter capacitance value
+    pub lf: T, // filter-side inductance value (p.u.)
+    pub cf: T, // filter capacitance value (p.u.)
 
-    pub i_max: T,  // Maximum current to saturate i_ref at
-    pub i_min: T,  // Minimum current to saturate i_ref at
+    pub i_max: T,  // Maximum current to saturate i_ref
+    pub i_min: T,  // Minimum current to saturate i_ref
 
     // Internal States
     pub x: DlvcStates<T>,  // [vd int, vq int, id int, iq int]
@@ -175,13 +188,22 @@ pub struct DlvController<T: Num> {
 }
 
 impl DlvController<f32> {
-    // Calculates the dynamics of the double-loop voltage controller's integrators using the given input, u.
-    // # Arguments    
-    // * 'x' - An array of state values;    [vd int, vq int, id int, iq int].
-    // * 'u' - An array of input values;    [E; ref voltage magnitude (p.u.), omega; ref voltage frequency (rad), 
-    //                                       Vd_c; cap direct-axis voltage; , Vq_c; cap quad-axis voltage, 
-    //                                       id_f; filter inductor direct-axis current, iq_f; filter inductor quad-axis current,
-    //                                       id_g; grid-side direct-axis current, iq_g; grid-side quad-axis current].
+    /// Calculates the outputs of the double-loop voltage controller using the given input, u.
+    /// # Arguments    
+    /// * 'x' - An array of state values: 
+    ///     * vd int; voltage direct-axis integrator, 
+    ///     * vq int; voltage quadrature-axis integrator, 
+    ///     * id int; current direct-axis integrator, , 
+    ///     * iq int; current quadrature-axis integrator, .
+    /// * 'u' - An array of input values:   
+    ///     * E; ref voltage magnitude (p.u.), 
+    ///     * omega; ref voltage frequency (rad),
+    ///     * vd_c; cap direct-axis voltage; , 
+    ///     * vq_c; cap quad-axis voltage,
+    ///     * id_f; filter inductor direct-axis current, 
+    ///     * iq_f; filter inductor quad-axis current,
+    ///     * id_g; grid-side direct-axis current, 
+    ///     * iq_g; grid-side quad-axis current.
     pub fn output(&self, u: [f32; DLVC_INPUTS]) -> [f32; DLVC_OUTPUTS] {
         let x = &self.x;
         let (v_ref, omega, vc_d, vc_q, if_d, if_q, ig_d, ig_q) = (u[0], u[1], u[2], u[3], u[4], u[5], u[6], u[7]);
@@ -207,6 +229,22 @@ impl DlvController<f32> {
         return [ud, uq];
     }
 
+    /// Calculates the dynamics of the double-loop voltage controller's integrators and steps their states using the given input, u.
+    /// # Arguments    
+    /// * 'x' - An array of state values: 
+    ///     * vd int; voltage direct-axis integrator, 
+    ///     * vq int; voltage quadrature-axis integrator, 
+    ///     * id int; current direct-axis integrator, , 
+    ///     * iq int; current quadrature-axis integrator, .
+    /// * 'u' - An array of input values:   
+    ///     * E; ref voltage magnitude (p.u.), 
+    ///     * omega; ref voltage frequency (rad),
+    ///     * vd_c; cap direct-axis voltage; , 
+    ///     * vq_c; cap quad-axis voltage,
+    ///     * id_f; filter inductor direct-axis current, 
+    ///     * iq_f; filter inductor quad-axis current,
+    ///     * id_g; grid-side direct-axis current, 
+    ///     * iq_g; grid-side quad-axis current.
     pub fn step_output(&mut self, dt: f32, u: [f32; DLVC_INPUTS]) -> [f32; DLVC_OUTPUTS] {
         let x = self.get_x();
         let (v_ref, omega, vc_d, vc_q, if_d, if_q, ig_d, ig_q) = (u[0], u[1], u[2], u[3], u[4], u[5], u[6], u[7]);
@@ -217,8 +255,8 @@ impl DlvController<f32> {
         let mut id_ref = self.kp_v * vd_err + self.ki_v * x[(0)];  // TODO: Missing FF componenet here using LCL cap and capacitor dq voltage?
         let mut iq_ref = self.kp_v * vq_err + self.ki_v * x[(1)];
         
-        //id_ref = id_ref.clamp(self.i_min, self.i_max);
-        //iq_ref = iq_ref.clamp(self.i_min, self.i_max);
+        id_ref = id_ref.clamp(self.i_min, self.i_max);
+        iq_ref = iq_ref.clamp(self.i_min, self.i_max);
 
         let id_err = id_ref - if_d; 
         let iq_err = iq_ref - if_q;
@@ -236,17 +274,25 @@ impl DlvController<f32> {
     }
 }
 
-// TODO: DETERMINE IF THESE INTEGRATOR DYNAMICS FUNCTIONS SHOULD REMAIN OR IF WE SHOULD SWITCH TO ANOTHER FORMAT FOR THE CONTROLLER TO AVOID DOUBLE CALCULATIONS???
-impl Dynamics<f32, DLVC_STATES, DLVC_INPUTS> for DlvController<f32> {  // TODO: DETERMINE IF THIS SHOULD BE REPRESENTED IN A DIFFERENT WAY. THE DYNAMICS FUNCTION MAY NOT BE ABLE TO PROPERLY STORE THE OUTPUT Udq THIS WAY
-    // Calculates the dynamics of the double-loop voltage controller's integrators using the given input, u.
-    // # Arguments    
-    // * 'x' - An array of state values;    [vd int, vq int, id int, iq int].
-    // * 'u' - An array of input values;    [E; ref voltage magnitude (p.u.), omega; ref voltage frequency (rad), 
-    //                                       Vd_c; cap direct-axis voltage; , Vq_c; cap quad-axis voltage, 
-    //                                       id_f; filter inductor direct-axis current, iq_f; filter inductor quad-axis current,
-    //                                       id_g; grid-side direct-axis current, iq_g; grid-side quad-axis current].
+impl Dynamics<f32, DLVC_STATES, DLVC_INPUTS> for DlvController<f32> { 
+    /// Calculates the dynamics of the double-loop voltage controller's integrators using the given input, u.
+    /// # Arguments    
+    /// * 'x' - An array of state values: 
+    ///     * vd int; voltage direct-axis integrator, 
+    ///     * vq int; voltage quadrature-axis integrator, 
+    ///     * id int; current direct-axis integrator, , 
+    ///     * iq int; current quadrature-axis integrator, .
+    /// * 'u' - An array of input values:   
+    ///     * E; ref voltage magnitude (p.u.), 
+    ///     * omega; ref voltage frequency (rad),
+    ///     * vd_c; cap direct-axis voltage; , 
+    ///     * vq_c; cap quad-axis voltage,
+    ///     * id_f; filter inductor direct-axis current, 
+    ///     * iq_f; filter inductor quad-axis current,
+    ///     * id_g; grid-side direct-axis current, 
+    ///     * iq_g; grid-side quad-axis current.
     fn dynamics(&self, x: &DlvcStates<f32>, u: [f32; DLVC_INPUTS]) -> DlvcStates<f32> {
-        let (v_ref, omega, vc_d, vc_q, if_d, if_q, ig_d, ig_q) = (u[0], u[1], u[2], u[3], u[4], u[5], u[6], u[7]);
+        let (v_ref, _omega, vc_d, vc_q, if_d, if_q, ig_d, ig_q) = (u[0], u[1], u[2], u[3], u[4], u[5], u[6], u[7]);
         let v_virtual_impedance = [0., 0.];  // TODO: Determine how to implement the virtual impedance / grid-side compensation and get this value here
         let vd_err = v_ref - vc_d - v_virtual_impedance[0];
         let vq_err = - vc_q - v_virtual_impedance[1];
@@ -284,10 +330,19 @@ impl<T: Num> XState<T, DLVC_STATES, DLVC_INPUTS> for DlvController<T> {
     }
 }
 
-pub fn build_double_loop_voltage_controller(x_nom: f32, kp_v: f32, ki_v: f32, kp_i: f32, ki_i: f32, lf: f32, cf: f32, i_max: f32, i_min: f32) -> DlvController<f32> {
+/// Constructs a double-loop voltage controller from the given controller parameters
+/// # Arguments
+/// * 'kp_v' - voltage-loop proportional gain
+/// * 'ki_v' - voltage-loop integral gain
+/// * 'kp_i' - current-loop proportional gain
+/// * 'ki_i' - current-loop integral gain
+/// * 'lf' - filter inductance value (p.u.)
+/// * 'cf' - filter capacitance value (p.u.)
+/// * 'i_max' - maximum reference current value (p.u.)
+/// * 'i_min' - minimum reference current value (p.u.)
+pub fn build_double_loop_voltage_controller(kp_v: f32, ki_v: f32, kp_i: f32, ki_i: f32, lf: f32, cf: f32, i_max: f32, i_min: f32) -> DlvController<f32> {
     DlvController {
         // Parameters
-        x_nom,
         kp_v,
         ki_v,
         kp_i,

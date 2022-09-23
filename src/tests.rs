@@ -1,4 +1,5 @@
 use crate::gfm::*;
+use crate::dynamics::*;
 
 #[test]
 fn test_dvoc_params() {
@@ -6,7 +7,7 @@ fn test_dvoc_params() {
     let w_nom: f32 = 60.;
     let xi: f32 = 15.;
     let c: f32 = 0.2679;
-    let dvoc = build_dvoc_controller(v_nom, w_nom, xi, c, 3.);
+    let dvoc = DvocController::new(v_nom, w_nom, xi, c, 3., rk2_step);
     assert_eq!(dvoc.v_nom, v_nom);
     assert_eq!(dvoc.w_nom, w_nom);
 }

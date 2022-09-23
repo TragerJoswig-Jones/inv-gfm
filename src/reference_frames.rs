@@ -1,7 +1,6 @@
 /* Structures for reference frame transformations */
 use super::constants::*;
 use super::*;
-// use idsp::cossin;  // TODO: Determine if we want to use floating-point math?
 
 /*
 ABC Three-Phase Values 
@@ -12,7 +11,9 @@ pub struct ABC<T> {
     pub c: T,
 }
 pub trait ToFromABC<T> {
+    /// Transforms the given reference frame object to three-phase abc values
     fn to_abc(&self) -> ABC<T>;
+    /// Transforms the given three-phase abc values to this reference frame
     fn from_abc(a: T, b: T, c: T) -> Self;
 }
 impl ToFromAlphaBeta<f32> for ABC<f32> {
@@ -74,7 +75,9 @@ pub struct Polar<T> {
     pub theta: T,
 }
 pub trait ToFromPolar<T> {
+    /// Transforms the given reference frame object to polar coordinates
     fn to_polar(&self) -> Polar<T>;
+    /// Transforms the given polar coordinate values to this reference frame
     fn from_polar(r: T, theta: T) -> Self;
 }
 impl ToFromABC<f32> for Polar<f32> {
@@ -129,7 +132,9 @@ pub struct AlphaBeta<T> {
     pub gamma: T,
 }
 pub trait ToFromAlphaBeta<T> {
+    /// Transforms the given reference frame object to the alpha-beta reference frame
     fn to_ab(&self) -> AlphaBeta<T>;
+    /// Transforms the given alpha-beta values to this reference frame
     fn from_ab(alpha: T, beta: T, gamma: T) -> Self;
 }
 impl AlphaBeta<f32> {
@@ -202,12 +207,19 @@ pub struct DQZ<T: Num> {
     pub z: T,
 }
 pub trait ToFromDQZ<T: Num> {
+    /// Transforms the given reference frame object to the direct-quadrature-zero 
+    /// frame with reference to the angle of the given sin_cos object.
     fn to_dqz(&self, sin_cos: &SinCos<T>) -> DQZ<T>;
+    /// Transforms the given DQZ values to this frame with
+    /// reference to the angle of the given sin_cos object.
     fn from_dqz(d: T, q: T, z: T, sin_cos: &SinCos<T>) -> Self;
 }
+
 // Implement ToFrom functions with all other ref frames for the DQZ structure
 impl DQZ<f32> {
     /* ABC */
+    /// Transforms the given three-phase values to the direct-quadrature-zero
+    /// frame with reference to the angle of the given sin_cos object.
     pub fn from_abc(a: f32, b: f32, c: f32, sin_cos: &SinCos<f32>) -> DQZ<f32> {
         let left = sin_cos.rotate_left_120();
         let right = sin_cos.rotate_right_120();
@@ -217,6 +229,8 @@ impl DQZ<f32> {
             z: ONE_THIRD * (a + b + c),
         }
     }
+    /// Transforms the given DQZ object to three-phase abc values
+    /// with reference to the angle of the given sin_cos object.
     pub fn to_abc(&self, sin_cos: &SinCos<f32>) -> ABC<f32> {
         let left = sin_cos.rotate_left_120();
         let right = sin_cos.rotate_left_120();
@@ -226,6 +240,8 @@ impl DQZ<f32> {
             }
     }
     /* Polar */
+    /// Transforms the given DQZ object to polar coordinate values
+    /// with reference to the angle of the given sin_cos object.
     pub fn to_polar(&self, sin_cos: &SinCos<f32>) -> Polar<f32> {
         if self.z != 0. {
             panic!("Cannot create a Polar value from unbalanced three-phase ABC values! Got {} as the DQZ zero value.", self.z);
@@ -235,6 +251,8 @@ impl DQZ<f32> {
             }
         }
     }
+    /// Transforms the given polar-coordinate values to the direct-quadrature-zero
+    /// frame with reference to the angle of the given sin_cos object.
     pub fn from_polar(r: f32, theta: f32, sin_cos: &SinCos<f32>) -> DQZ<f32> {
         let sin_cos_thetas = SinCos::<f32>::from_theta(theta + sin_cos.theta);
         DQZ { d: r * sin_cos_thetas.cos_val,
@@ -243,26 +261,30 @@ impl DQZ<f32> {
             }
     }
     /* AlphaBeta */
+    /// Transforms the given DQZ object to the alpha-beta reference frame
+    /// with reference to the angle of the given sin_cos object.
     pub fn to_ab(&self, sin_cos: &SinCos<f32>) -> AlphaBeta<f32> {
         return AlphaBeta { alpha: sin_cos.cos_val * self.d - sin_cos.sin_val * self.q, 
                            beta: sin_cos.sin_val * self.d + sin_cos.cos_val * self.q, 
                            gamma: self.z }
     }
+    /// Transforms the given alpha-beta values to the direct-quadrature-zero
+    /// frame with reference to the angle of the given sin_cos object.
     pub fn from_ab(alpha: f32, beta: f32, gamma: f32, sin_cos: &SinCos<f32>) -> DQZ<f32> {
         let d = sin_cos.cos_val * alpha + sin_cos.sin_val * beta;
         let q = sin_cos.cos_val * beta - (sin_cos.sin_val * alpha);
         let z = gamma;
         DQZ{ d, q, z }
     }
+    /// Transforms the given alpha-beta values (assuming gamma = 0) to the direct-quadrature-zero
+    /// frame with reference to the angle of the given sin_cos object.
     pub fn from_ab_(alpha: f32, beta: f32, sin_cos: &SinCos<f32>) -> DQZ<f32> {
         return DQZ::from_ab(alpha, beta, 0., sin_cos)
     }
 
 }
 
-/* 
-Stores sine and cosine pair values 
-*/
+/// Stores the sine and cosine pair values for an angle theta
 pub struct SinCos<T: Num> {
     sin_val: T,
     cos_val: T,
@@ -270,9 +292,13 @@ pub struct SinCos<T: Num> {
 }
 
 pub trait Trig<T: Num> {
+    /// Creates a SinCos object from the given theta (rad) value
     fn from_theta(theta: T) -> SinCos<T>;
+    /// Shifts the reference angle of the SinCos object counter-clockwise 1/3rd of a full rotation
     fn rotate_right_120(&self) -> SinCos<T>;
+    /// Shifts the reference angle of the SinCos object clockwise 1/3rd of a full rotation
     fn rotate_left_120(&self) -> SinCos<T>;
+    /// Flips the sign of the reference angle
     fn flip_theta(&self) -> SinCos<T>; 
 }
 
@@ -282,7 +308,7 @@ impl Trig<f32> for SinCos<f32> {
         let cos_val = libm::cosf(theta);
         Self{ sin_val, cos_val, theta }
     }
-    // Rotate the reference angle, theta, by 120 degrees counter-clockwise
+    /// Rotate the reference angle, theta, by 120 degrees counter-clockwise
     fn rotate_right_120(&self) -> SinCos<f32> {  // TODO: Should we have a function that modifies the values of the SinCos object instead of returning a new one?
         return SinCos{ sin_val: -ONE_HALF * self.sin_val + SQRT_3_OVER_2 * self.cos_val, 
                         cos_val: -ONE_HALF * self.cos_val - SQRT_3_OVER_2 * self.sin_val,
@@ -290,7 +316,7 @@ impl Trig<f32> for SinCos<f32> {
                      }
     }
 
-    // Rotate the reference angle, theta, by 120 degrees clockwise
+    /// Rotate the reference angle, theta, by 120 degrees clockwise
     fn rotate_left_120(&self) -> SinCos<f32> {
         return SinCos{ sin_val: -ONE_HALF * self.sin_val - SQRT_3_OVER_2 * self.cos_val, 
                         cos_val: -ONE_HALF * self.cos_val + SQRT_3_OVER_2 * self.sin_val,
