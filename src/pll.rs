@@ -70,7 +70,7 @@ impl SrfPhaseLockedLoop<f32> {
     pub fn output(&self, u: [f32; SRF_PLL_INPUTS]) -> [f32; SRF_PLL_OUTPUTS] { 
         let x = self.x;
         let sin_cos = SinCos::from_theta(x[(0)]);
-        let v_in_dq = DQZ::from_ab(u[0], u[1], u[2], &sin_cos);
+        let v_in_dq = DQZ::from_ab_(u[0], u[1], &sin_cos);
         let omega = 1. + self.kp * v_in_dq.q + self.ki * x[(1)];
         let v_mag = libm::sqrtf(v_in_dq.d*v_in_dq.d + v_in_dq.q*v_in_dq.q) / SQRT_2;
         [v_mag, self.x[(0)], omega]

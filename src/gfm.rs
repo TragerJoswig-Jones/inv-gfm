@@ -176,7 +176,7 @@ impl DroopController<f32> {
     /// Constructs a droop controller from the given controller parameters
     /// # Arguments
     /// * 'v_nom' - nominal voltage (V)
-    /// * 'w_nom' - nominal oscillator (rad/s)
+    /// * 'w_nom' - nominal frequency (rad/s)
     /// * 'mp' - active power/frequency droop slope
     /// * 'mq' - reactive power/voltage droop slope
     /// * 'n_phase' - number of electrical phases of the inverter

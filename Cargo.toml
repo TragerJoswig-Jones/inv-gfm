@@ -8,4 +8,4 @@ edition = "2021"
 [dependencies]
 # idsp = "0.8.0"  # Option for f32 sin_cos calculations
 libm = "0.2.2"  # Option for f32 sin_cos calculations
-nalgebra = "0.31.1"
+nalgebra = { version = "0.31.1", default-features = false, features = [ "libm" ] }  # Unsure if libm feature is used at the moment

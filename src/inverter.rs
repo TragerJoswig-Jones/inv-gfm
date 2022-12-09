@@ -188,6 +188,35 @@ pub struct DlvController<T: Num> {
 }
 
 impl DlvController<f32> {
+    /// Constructs a double-loop voltage controller from the given controller parameters
+    /// # Arguments
+    /// * 'kp_v' - voltage-loop proportional gain
+    /// * 'ki_v' - voltage-loop integral gain
+    /// * 'kp_i' - current-loop proportional gain
+    /// * 'ki_i' - current-loop integral gain
+    /// * 'lf' - filter inductance value (p.u.)
+    /// * 'cf' - filter capacitance value (p.u.)
+    /// * 'i_max' - maximum reference current value (p.u.)
+    /// * 'i_min' - minimum reference current value (p.u.)
+    pub fn new(kp_v: f32, ki_v: f32, kp_i: f32, ki_i: f32, lf: f32, cf: f32, i_max: f32, i_min: f32) -> DlvController<f32> {
+        DlvController {
+            // Parameters
+            kp_v,
+            ki_v,
+            kp_i,
+            ki_i,
+            lf,
+            cf,
+
+            i_max,
+            i_min,
+            
+            // Internal States
+            x: na::Vector4::new(0., 0., 0., 0.),
+            step_method: rk2_step,
+        }
+    }
+
     /// Calculates the outputs of the double-loop voltage controller using the given input, u.
     /// # Arguments    
     /// * 'x' - An array of state values: 
@@ -327,34 +356,5 @@ impl<T: Num> XState<T, DLVC_STATES, DLVC_INPUTS> for DlvController<T> {
     }
     fn set_x(&mut self, x: Vec<T, DLVC_STATES>) {
         self.x = x;
-    }
-}
-
-/// Constructs a double-loop voltage controller from the given controller parameters
-/// # Arguments
-/// * 'kp_v' - voltage-loop proportional gain
-/// * 'ki_v' - voltage-loop integral gain
-/// * 'kp_i' - current-loop proportional gain
-/// * 'ki_i' - current-loop integral gain
-/// * 'lf' - filter inductance value (p.u.)
-/// * 'cf' - filter capacitance value (p.u.)
-/// * 'i_max' - maximum reference current value (p.u.)
-/// * 'i_min' - minimum reference current value (p.u.)
-pub fn build_double_loop_voltage_controller(kp_v: f32, ki_v: f32, kp_i: f32, ki_i: f32, lf: f32, cf: f32, i_max: f32, i_min: f32) -> DlvController<f32> {
-    DlvController {
-        // Parameters
-        kp_v,
-        ki_v,
-        kp_i,
-        ki_i,
-        lf,
-        cf,
-
-        i_max,
-        i_min,
-        
-        // Internal States
-        x: na::Vector4::new(0., 0., 0., 0.),
-        step_method: rk2_step,
     }
 }
