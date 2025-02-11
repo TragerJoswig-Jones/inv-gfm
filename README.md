@@ -1,5 +1,5 @@
-# unifi-gfm
-An embedded control library developed in Rust for the universal interoperability for grid-forming inverters (unifi) Consortium.
+# inv-gfm
+An embedded control library developed in Rust for implementing grid-forming control in inverter devices.
 This library contains modular grid-interfacing inverter controllers developed for direct use on an embedded controller.
 
 ## Contents
